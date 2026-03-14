@@ -231,57 +231,40 @@ async function main() {
     "/openai/chat/completions",
     "/openai/v1/chat/completions",
   ]
-  const chatBody = JSON.stringify({
+  const chatBodyWithPrefix = JSON.stringify({
     model: "oca/gpt-5.3-codex",
+    messages: [{ role: "user", content: "Reply with exactly one word: hello" }],
+    max_tokens: 10,
+  })
+  const chatBodyWithoutPrefix = JSON.stringify({
+    model: "gpt-5.3-codex",
     messages: [{ role: "user", content: "Reply with exactly one word: hello" }],
     max_tokens: 10,
   })
 
   console.log("\n[e2e] Step 4a: Probing upstream chat completions paths directly...")
-  for (const path of chatPaths) {
-    const url = `${baseURL}${path}`
-    try {
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "authorization": `Bearer ${tokens.access_token}`,
-        },
-        body: chatBody,
-        signal: AbortSignal.timeout(30_000),
-      })
-      const body = await resp.text()
-      console.log(`[e2e]   ${path} → ${resp.status}: ${body.slice(0, 200)}`)
-      if (resp.ok) {
-        console.log(`[e2e]   ^^^ SUCCESS! Working path found: ${path}`)
+  for (const [label, chatBody] of [["with oca/ prefix", chatBodyWithPrefix], ["WITHOUT oca/ prefix", chatBodyWithoutPrefix]] as const) {
+    console.log(`\n  --- Model name ${label} ---`)
+    for (const path of ["/v1/chat/completions", "/chat/completions"]) {
+      const url = `${baseURL}${path}`
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "authorization": `Bearer ${tokens.access_token}`,
+          },
+          body: chatBody,
+          signal: AbortSignal.timeout(30_000),
+        })
+        const body = await resp.text()
+        console.log(`[e2e]   ${path} → ${resp.status}: ${body.slice(0, 300)}`)
+        if (resp.ok) {
+          console.log(`[e2e]   ^^^ SUCCESS!`)
+        }
+      } catch (err) {
+        console.log(`[e2e]   ${path} → ERROR: ${err}`)
       }
-    } catch (err) {
-      console.log(`[e2e]   ${path} → ERROR: ${err}`)
-    }
-  }
-
-  // Also try the second base URL
-  const baseURL2 = "https://code.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm"
-  console.log(`\n[e2e] Trying second base URL: ${baseURL2}`)
-  for (const path of chatPaths.slice(0, 2)) {
-    const url = `${baseURL2}${path}`
-    try {
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "authorization": `Bearer ${tokens.access_token}`,
-        },
-        body: chatBody,
-        signal: AbortSignal.timeout(30_000),
-      })
-      const body = await resp.text()
-      console.log(`[e2e]   ${path} → ${resp.status}: ${body.slice(0, 200)}`)
-      if (resp.ok) {
-        console.log(`[e2e]   ^^^ SUCCESS!`)
-      }
-    } catch (err) {
-      console.log(`[e2e]   ${path} → ERROR: ${err}`)
     }
   }
 
