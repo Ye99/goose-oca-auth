@@ -1,4 +1,4 @@
-import { discoverProvider, refreshAccessToken, type ProviderDiscovery } from "oca-auth-core"
+import { discoverProvider, refreshAccessToken, TOKEN_EXPIRY_BUFFER_MS, type ProviderDiscovery } from "oca-auth-core"
 
 import type { BridgeConfig } from "../config"
 
@@ -52,7 +52,7 @@ export function createBridgeSession(
 
     if (authState.accessToken) {
       const expiresAt = authState.accessTokenExpiresAt
-      if (expiresAt === undefined || expiresAt > now() || !authState.refreshToken) {
+      if (expiresAt === undefined || expiresAt > now() + TOKEN_EXPIRY_BUFFER_MS || !authState.refreshToken) {
         return authState.accessToken
       }
     }
@@ -120,8 +120,25 @@ export function createBridgeSession(
     }
 
     const token = await getAccessToken()
-    const body = await request.text()
-    const headers = new Headers(request.headers)
+    const rawBody = await request.text()
+
+    const prefix = `${config.providerId}/`
+    let upstreamBody = rawBody
+    try {
+      const parsed = JSON.parse(rawBody)
+      if (typeof parsed.model === "string" && parsed.model.startsWith(prefix)) {
+        parsed.model = parsed.model.slice(prefix.length)
+        upstreamBody = JSON.stringify(parsed)
+      }
+    } catch {
+      /* forward body as-is if not valid JSON */
+    }
+
+    const headers = new Headers()
+    const contentType = request.headers.get("content-type")
+    if (contentType) headers.set("content-type", contentType)
+    const accept = request.headers.get("accept")
+    if (accept) headers.set("accept", accept)
     headers.set("authorization", toBearer(token))
 
     const urls = buildChatCompletionUrls(providerDiscovery.baseURL)
@@ -129,7 +146,7 @@ export function createBridgeSession(
       const response = await fetchImpl(url, {
         method: "POST",
         headers,
-        body,
+        body: upstreamBody,
       })
 
       if (response.status === 404 && index < urls.length - 1) continue
