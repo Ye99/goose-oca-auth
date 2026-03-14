@@ -1,0 +1,17 @@
+{
+  "name": "goose-oca-auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "oca-auth-core": "file:../opencode-oca-auth/packages/oca-auth-core"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.10",
+    "typescript": "^5.9.3"
+  }
+}
