@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { normalizeUrl } from "oca-auth-core"
 
 export type GooseProviderOptions = {
   name?: string
@@ -28,7 +29,7 @@ export type GooseCustomProviderConfig = {
 }
 
 function withChatCompletionsPath(baseUrl: string) {
-  const normalized = baseUrl.replace(/\/+$/, "")
+  const normalized = normalizeUrl(baseUrl)
   return normalized.endsWith("/v1/chat/completions")
     ? normalized
     : `${normalized}/v1/chat/completions`

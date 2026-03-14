@@ -25,9 +25,22 @@ function toBearer(value: string) {
   return value.startsWith("Bearer ") ? value : `Bearer ${value}`
 }
 
+function stripTrailingSlashes(value: string) {
+  return value.replace(/\/+$/, "")
+}
+
 function buildChatCompletionUrls(baseURL: string) {
-  const normalized = baseURL.replace(/\/+$/, "")
+  const normalized = stripTrailingSlashes(baseURL)
   return [`${normalized}/chat/completions`, `${normalized}/v1/chat/completions`]
+}
+
+function stripModelPrefix(rawBody: string, prefix: string): string {
+  const parsed = JSON.parse(rawBody)
+  if (typeof parsed.model === "string" && parsed.model.startsWith(prefix)) {
+    parsed.model = parsed.model.slice(prefix.length)
+    return JSON.stringify(parsed)
+  }
+  return rawBody
 }
 
 export function createBridgeSession(
@@ -121,6 +134,30 @@ export function createBridgeSession(
     return discoveryPromise
   }
 
+  const forwardToUpstream = async (
+    urls: string[],
+    headers: Headers,
+    body: string,
+  ): Promise<Response> => {
+    for (const [index, url] of urls.entries()) {
+      const response = await fetchImpl(url, {
+        method: "POST",
+        headers,
+        body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(config.requestTimeoutMs),
+      })
+
+      if (response.status === 404 && index < urls.length - 1) {
+        console.warn(`[oca] ${url} returned 404, falling back to ${urls[index + 1]}`)
+        continue
+      }
+      return response
+    }
+
+    return upstreamError("Unable to reach an OCA chat completions endpoint")
+  }
+
   const proxyChatCompletions = async (request: Request) => {
     const providerDiscovery = await getDiscovery()
     if (!providerDiscovery) {
@@ -130,14 +167,9 @@ export function createBridgeSession(
     const token = await getAccessToken()
     const rawBody = await request.text()
 
-    const prefix = `${config.providerId}/`
-    let upstreamBody = rawBody
+    let upstreamBody: string
     try {
-      const parsed = JSON.parse(rawBody)
-      if (typeof parsed.model === "string" && parsed.model.startsWith(prefix)) {
-        parsed.model = parsed.model.slice(prefix.length)
-        upstreamBody = JSON.stringify(parsed)
-      }
+      upstreamBody = stripModelPrefix(rawBody, `${config.providerId}/`)
     } catch {
       return badRequest("Invalid JSON body")
     }
@@ -149,21 +181,11 @@ export function createBridgeSession(
     if (accept) headers.set("accept", accept)
     headers.set("authorization", toBearer(token))
 
-    const urls = buildChatCompletionUrls(providerDiscovery.baseURL)
-    for (const [index, url] of urls.entries()) {
-      const response = await fetchImpl(url, {
-        method: "POST",
-        headers,
-        body: upstreamBody,
-        redirect: "manual",
-        signal: AbortSignal.timeout(config.requestTimeoutMs),
-      })
-
-      if (response.status === 404 && index < urls.length - 1) continue
-      return response
-    }
-
-    return upstreamError("Unable to reach an OCA chat completions endpoint")
+    return forwardToUpstream(
+      buildChatCompletionUrls(providerDiscovery.baseURL),
+      headers,
+      upstreamBody,
+    )
   }
 
   return {

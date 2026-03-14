@@ -12,6 +12,14 @@ type CreateAppDeps = {
   session?: BridgeSession
 }
 
+async function withUpstreamErrorHandling(fn: () => Promise<Response>): Promise<Response> {
+  try {
+    return await fn()
+  } catch (error) {
+    return upstreamError(error instanceof Error ? error.message : String(error))
+  }
+}
+
 export function createApp(config = resolveBridgeConfig(), deps: CreateAppDeps = {}): BridgeApp {
   const session = deps.session ?? createBridgeSession(config)
 
@@ -25,24 +33,17 @@ export function createApp(config = resolveBridgeConfig(), deps: CreateAppDeps = 
       }
 
       if (pathname === "/v1/models") {
-        try {
+        return withUpstreamErrorHandling(async () => {
           const discovery = await session.getDiscovery()
           return Response.json(buildModelsResponse(config, discovery))
-        } catch (error) {
-          return upstreamError(error instanceof Error ? error.message : String(error))
-        }
+        })
       }
 
       if (pathname === "/v1/chat/completions") {
         if (request.method !== "POST") {
           return badRequest("chat completions requires POST")
         }
-
-        try {
-          return await session.proxyChatCompletions(request)
-        } catch (error) {
-          return upstreamError(error instanceof Error ? error.message : String(error))
-        }
+        return withUpstreamErrorHandling(() => session.proxyChatCompletions(request))
       }
 
       return new Response("Not found", { status: 404 })
