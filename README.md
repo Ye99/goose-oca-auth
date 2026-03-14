@@ -8,6 +8,7 @@ Current bridge behavior:
 - `GET /v1/models` discovers OCA models through the shared core and returns an OpenAI-compatible model list
 - `POST /v1/chat/completions` proxies requests to the first working OCA chat completions endpoint
 - auto-refreshes expired access tokens when `OCA_REFRESH_TOKEN` is available
+- `scripts/install-goose-oca-auth.js` installs a Goose custom-provider JSON that points Goose at the bridge
 
 ## Configuration
 
@@ -32,6 +33,27 @@ Supported environment variables:
 bun src/index.ts
 ```
 
+## Install into Goose
+
+This writes `oca_bridge.json` into Goose's `custom_providers` directory.
+
+```bash
+./scripts/install-goose-oca-auth.js
+```
+
+Optional arguments:
+
+```bash
+./scripts/install-goose-oca-auth.js <goose-config-dir> <bridge-base-url>
+```
+
+Example:
+
+```bash
+./scripts/install-goose-oca-auth.js ~/.config/goose http://127.0.0.1:8787
+goose run --provider oca_bridge --model oca/gpt-5.3-codex --no-profile --no-session --text "Reply with exactly: ok"
+```
+
 ## Development
 
 ```bash
@@ -39,6 +61,8 @@ bun install
 bun test
 bun run typecheck
 ```
+
+The test suite includes a Goose CLI end-to-end regression that uses the installed `goose` binary on this host with isolated XDG directories.
 
 This scaffold depends on the shared OCA auth core via a local path dependency:
 `../opencode-oca-auth/packages/oca-auth-core`.

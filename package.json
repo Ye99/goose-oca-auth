@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "goose-oca-auth-install": "./scripts/install-goose-oca-auth.js"
+  },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit"
