@@ -47,7 +47,7 @@ export function buildGooseProviderConfig(
     base_url: withChatCompletionsPath(options.baseUrl),
     models: [
       {
-        name: options.defaultModel ?? "oca/gpt-5.3-codex",
+        name: options.defaultModel ?? "oca/gpt-5.4",
         context_limit: options.contextLimit ?? 400_000,
       },
     ],

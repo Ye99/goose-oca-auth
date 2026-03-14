@@ -27,7 +27,7 @@ function parseExpiresAt(value?: string): number | undefined {
 
 function normalizeDefaultModel(providerId: string, value?: string) {
   const next = value?.trim()
-  if (!next) return `${providerId}/gpt-5.3-codex`
+  if (!next) return `${providerId}/gpt-5.4`
   const slashIndex = next.indexOf("/")
   if (slashIndex >= 0) return `${providerId}/${next.slice(slashIndex + 1)}`
   return `${providerId}/${next}`
