@@ -54,6 +54,24 @@ function needsResponsesApi(modelId: string, models: ResolvedOcaModel[]): boolean
   return id.includes("gpt-5") || id.includes("codex")
 }
 
+/** Convert Chat Completions tool format to Responses API tool format. */
+function convertTools(tools: unknown[]): unknown[] {
+  return tools.map((tool: unknown) => {
+    const t = tool as Record<string, unknown>
+    if (t.type === "function" && t.function) {
+      const fn = t.function as Record<string, unknown>
+      return {
+        type: "function",
+        name: fn.name,
+        description: fn.description,
+        parameters: fn.parameters,
+        strict: fn.strict,
+      }
+    }
+    return t
+  })
+}
+
 /** Translate a Chat Completions request body to Responses API format. */
 function chatToResponsesRequest(body: Record<string, unknown>): string {
   const out: Record<string, unknown> = { model: body.model }
@@ -63,7 +81,7 @@ function chatToResponsesRequest(body: Record<string, unknown>): string {
   if (body.temperature != null) out.temperature = body.temperature
   if (body.top_p != null) out.top_p = body.top_p
   if (body.stop != null) out.stop = body.stop
-  if (body.tools != null) out.tools = body.tools
+  if (body.tools != null) out.tools = convertTools(body.tools as unknown[])
   return JSON.stringify(out)
 }
 
