@@ -1,7 +1,7 @@
 import { discoverProvider, refreshAccessToken, TOKEN_EXPIRY_BUFFER_MS, clampExpiresIn, type ProviderDiscovery } from "oca-auth-core"
 
 import type { BridgeConfig } from "../config"
-import { upstreamError } from "../routes/chat-completions"
+import { badRequest, upstreamError } from "../routes/chat-completions"
 
 export type BridgeSession = {
   getAccessToken(): Promise<string>
@@ -139,7 +139,7 @@ export function createBridgeSession(
         upstreamBody = JSON.stringify(parsed)
       }
     } catch {
-      /* forward body as-is if not valid JSON */
+      return badRequest("Invalid JSON body")
     }
 
     const headers = new Headers()
