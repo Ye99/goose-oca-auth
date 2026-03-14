@@ -61,7 +61,7 @@ test("models endpoint exposes discovered models in an OpenAI-compatible list", a
   })
 })
 
-test("chat completions endpoint proxies to the first working upstream path", async () => {
+test("chat completions endpoint routes gpt-5 models through the Responses API", async () => {
   const seenUrls: string[] = []
   const config = resolveBridgeConfig({
     OCA_BASE_URL: "https://oca.test.oraclecloud.com/litellm",
@@ -83,18 +83,29 @@ test("chat completions endpoint proxies to the first working upstream path", asy
         })
       }
 
-      if (url === "https://oca.test.oraclecloud.com/litellm/chat/completions") {
-        return new Response("not found", { status: 404 })
-      }
-
-      if (url === "https://oca.test.oraclecloud.com/litellm/v1/chat/completions") {
+      if (url === "https://oca.test.oraclecloud.com/litellm/responses") {
         expect(new Headers(init?.headers).get("authorization")).toBe("Bearer api-key-token")
-        expect(await new Response(init?.body).text()).toContain("gpt-5.3-codex")
-        return Response.json({
-          id: "chatcmpl-123",
-          object: "chat.completion",
-          choices: [],
-        })
+        const body = JSON.parse(await new Response(init?.body).text())
+        expect(body.model).toBe("gpt-5.3-codex")
+        expect(body.input).toEqual([])
+        return new Response(
+          `data: ${JSON.stringify({
+            id: "resp-123",
+            object: "response",
+            created_at: 0,
+            status: "completed",
+            model: "gpt-5.3-codex",
+            output: [
+              {
+                type: "message",
+                content: [{ type: "output_text", text: "Hello!" }],
+                role: "assistant",
+              },
+            ],
+            usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+          })}\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        )
       }
 
       return new Response("not found", { status: 404 })
@@ -110,16 +121,11 @@ test("chat completions endpoint proxies to the first working upstream path", asy
   )
 
   expect(response.status).toBe(200)
-  expect(await response.json()).toEqual({
-    id: "chatcmpl-123",
-    object: "chat.completion",
-    choices: [],
-  })
-  expect(seenUrls).toContain("https://oca.test.oraclecloud.com/litellm/v1/model/info")
-  expect(seenUrls.slice(-2)).toEqual([
-    "https://oca.test.oraclecloud.com/litellm/chat/completions",
-    "https://oca.test.oraclecloud.com/litellm/v1/chat/completions",
-  ])
+  const json = await response.json() as Record<string, unknown>
+  expect(json.object).toBe("chat.completion")
+  expect((json as any).choices[0].message.content).toBe("Hello!")
+  expect((json as any).usage.prompt_tokens).toBe(5)
+  expect(seenUrls).toContain("https://oca.test.oraclecloud.com/litellm/responses")
 })
 
 test("models endpoint returns a structured error when auth is missing", async () => {

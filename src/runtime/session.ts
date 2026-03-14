@@ -1,4 +1,4 @@
-import { discoverProvider, refreshAccessToken, TOKEN_EXPIRY_BUFFER_MS, clampExpiresIn, type ProviderDiscovery } from "oca-auth-core"
+import { discoverProvider, refreshAccessToken, TOKEN_EXPIRY_BUFFER_MS, clampExpiresIn, type ProviderDiscovery, type ResolvedOcaModel } from "oca-auth-core"
 
 import type { BridgeConfig } from "../config"
 import { badRequest, upstreamError } from "../routes/chat-completions"
@@ -34,13 +34,92 @@ function buildChatCompletionUrls(baseURL: string) {
   return [`${normalized}/chat/completions`, `${normalized}/v1/chat/completions`]
 }
 
-function stripOcaPrefix(rawBody: string): string {
-  const parsed = JSON.parse(rawBody)
-  if (typeof parsed.model === "string" && parsed.model.startsWith("oca/")) {
-    parsed.model = parsed.model.slice(4)
-    return JSON.stringify(parsed)
+function buildResponsesUrl(baseURL: string) {
+  return `${stripTrailingSlashes(baseURL)}/responses`
+}
+
+function stripOcaPrefix(body: Record<string, unknown>): Record<string, unknown> {
+  if (typeof body.model === "string" && body.model.startsWith("oca/")) {
+    return { ...body, model: body.model.slice(4) }
   }
-  return rawBody
+  return body
+}
+
+/** Returns true if the model should use the Responses API instead of Chat Completions. */
+function needsResponsesApi(modelId: string, models: ResolvedOcaModel[]): boolean {
+  const entry = models.find((m) => m.id === modelId)
+  if (entry) return entry.npmPackage === "@ai-sdk/openai"
+  // Heuristic fallback if model not found in discovery
+  const id = modelId.toLowerCase()
+  return id.includes("gpt-5") || id.includes("codex")
+}
+
+/** Translate a Chat Completions request body to Responses API format. */
+function chatToResponsesRequest(body: Record<string, unknown>): string {
+  const out: Record<string, unknown> = { model: body.model }
+  // The Responses API accepts messages arrays via `input`
+  if (body.messages) out.input = body.messages
+  if (body.max_tokens != null) out.max_output_tokens = body.max_tokens
+  if (body.temperature != null) out.temperature = body.temperature
+  if (body.top_p != null) out.top_p = body.top_p
+  if (body.stop != null) out.stop = body.stop
+  if (body.tools != null) out.tools = body.tools
+  return JSON.stringify(out)
+}
+
+/** Parse upstream SSE response — the Responses API sends `data: {json}\n\n` even for non-streaming. */
+function parseResponsesBody(raw: string): Record<string, unknown> | undefined {
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith("data: ")) {
+      try {
+        return JSON.parse(trimmed.slice(6)) as Record<string, unknown>
+      } catch { /* skip */ }
+    }
+  }
+  // Try parsing as plain JSON
+  try {
+    return JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
+/** Translate a Responses API response to Chat Completions format. */
+function responsesToChatCompletion(data: Record<string, unknown>): string {
+  const output = Array.isArray(data.output) ? data.output : []
+  const firstMsg = output.find((o: Record<string, unknown>) => o.type === "message") as
+    | Record<string, unknown>
+    | undefined
+
+  let content = ""
+  if (firstMsg && Array.isArray(firstMsg.content)) {
+    content = (firstMsg.content as Array<Record<string, unknown>>)
+      .filter((c) => c.type === "output_text")
+      .map((c) => c.text)
+      .join("")
+  }
+
+  const usage = (data.usage ?? {}) as Record<string, unknown>
+
+  return JSON.stringify({
+    id: data.id ?? `chatcmpl-${Date.now()}`,
+    object: "chat.completion",
+    created: data.created_at ?? Math.floor(Date.now() / 1000),
+    model: data.model,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content },
+        finish_reason: data.status === "completed" ? "stop" : "length",
+      },
+    ],
+    usage: {
+      prompt_tokens: usage.input_tokens ?? 0,
+      completion_tokens: usage.output_tokens ?? 0,
+      total_tokens: usage.total_tokens ?? 0,
+    },
+  })
 }
 
 export function createBridgeSession(
@@ -167,24 +246,51 @@ export function createBridgeSession(
     const token = await getAccessToken()
     const rawBody = await request.text()
 
-    let upstreamBody: string
+    let parsed: Record<string, unknown>
     try {
-      upstreamBody = stripOcaPrefix(rawBody)
+      parsed = JSON.parse(rawBody) as Record<string, unknown>
     } catch {
       return badRequest("Invalid JSON body")
     }
+    parsed = stripOcaPrefix(parsed)
+    const modelId = typeof parsed.model === "string" ? parsed.model : ""
 
     const headers = new Headers()
-    const contentType = request.headers.get("content-type")
-    if (contentType) headers.set("content-type", contentType)
-    const accept = request.headers.get("accept")
-    if (accept) headers.set("accept", accept)
+    headers.set("content-type", "application/json")
     headers.set("authorization", toBearer(token))
 
+    if (needsResponsesApi(modelId, providerDiscovery.models)) {
+      // Route through the Responses API and translate back to Chat Completions format
+      const responsesBody = chatToResponsesRequest(parsed)
+      const responsesUrl = buildResponsesUrl(providerDiscovery.baseURL)
+
+      const response = await fetchImpl(responsesUrl, {
+        method: "POST",
+        headers,
+        body: responsesBody,
+        redirect: "manual",
+        signal: AbortSignal.timeout(config.requestTimeoutMs),
+      })
+
+      if (!response.ok) return response
+
+      const raw = await response.text()
+      const data = parseResponsesBody(raw)
+      if (!data) {
+        return upstreamError("Failed to parse Responses API response")
+      }
+
+      return new Response(responsesToChatCompletion(data), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }
+
+    // Standard Chat Completions path for non-responses models
     return forwardToUpstream(
       buildChatCompletionUrls(providerDiscovery.baseURL),
       headers,
-      upstreamBody,
+      JSON.stringify(parsed),
     )
   }
 

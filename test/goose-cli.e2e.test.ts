@@ -54,6 +54,27 @@ test("Goose can use the installed OCA bridge custom provider end-to-end", async 
         })
       }
 
+      if (url.pathname === "/responses") {
+        return new Response(
+          `data: ${JSON.stringify({
+            id: "resp-test",
+            object: "response",
+            created_at: 0,
+            status: "completed",
+            model: "gpt-5.3-codex",
+            output: [
+              {
+                type: "message",
+                content: [{ type: "output_text", text: "ok" }],
+                role: "assistant",
+              },
+            ],
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          })}\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        )
+      }
+
       if (url.pathname === "/chat/completions") {
         return new Response("not found", { status: 404 })
       }
