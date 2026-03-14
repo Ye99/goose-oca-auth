@@ -37,6 +37,12 @@ export function resolveBridgeConfig(
   env: Record<string, string | undefined> = process.env,
 ): BridgeConfig {
   const host = env.GOOSE_OCA_HOST?.trim() || "127.0.0.1"
+  if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
+    console.warn(
+      `[oca] WARNING: GOOSE_OCA_HOST="${host}" is not a loopback address. ` +
+        `The proxy has no authentication — binding to a non-loopback address exposes it to the network.`,
+    )
+  }
   const rawPort = Number(env.GOOSE_OCA_PORT)
   const port = Number.isFinite(rawPort) && rawPort > 0 ? rawPort : 8787
   const providerId = env.GOOSE_OCA_PROVIDER?.trim() || "oca"

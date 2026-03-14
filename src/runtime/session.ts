@@ -1,6 +1,7 @@
-import { discoverProvider, refreshAccessToken, TOKEN_EXPIRY_BUFFER_MS, type ProviderDiscovery } from "oca-auth-core"
+import { discoverProvider, refreshAccessToken, TOKEN_EXPIRY_BUFFER_MS, clampExpiresIn, type ProviderDiscovery } from "oca-auth-core"
 
 import type { BridgeConfig } from "../config"
+import { upstreamError } from "../routes/chat-completions"
 
 export type BridgeSession = {
   getAccessToken(): Promise<string>
@@ -43,7 +44,11 @@ export function createBridgeSession(
     refreshToken: config.refreshToken,
   }
 
+  const DISCOVERY_TTL_MS = 5 * 60 * 1000
+  const DISCOVERY_NEGATIVE_TTL_MS = 30 * 1000
+
   let discovery: ProviderDiscovery | undefined
+  let discoveryExpiresAt = 0
   let discoveryPromise: Promise<ProviderDiscovery | undefined> | undefined
   let refreshPromise: Promise<string> | undefined
 
@@ -68,10 +73,20 @@ export function createBridgeSession(
         authState.refreshToken,
       )
         .then((tokens) => {
-          authState.accessToken = tokens.access_token
-          authState.refreshToken = tokens.refresh_token ?? authState.refreshToken
-          authState.accessTokenExpiresAt = now() + (tokens.expires_in ?? 3600) * 1000
-          return tokens.access_token
+          const newToken = tokens.access_token
+          const newRefresh = tokens.refresh_token ?? authState.refreshToken
+          const newExpiry = now() + clampExpiresIn(tokens.expires_in) * 1000
+          // Assign atomically only after all values are known-good
+          authState.accessToken = newToken
+          authState.refreshToken = newRefresh
+          authState.accessTokenExpiresAt = newExpiry
+          return newToken
+        })
+        .catch((err) => {
+          // Clear stale access token so next call doesn't use an expired one
+          authState.accessToken = undefined
+          authState.accessTokenExpiresAt = undefined
+          throw err
         })
         .finally(() => {
           refreshPromise = undefined
@@ -82,7 +97,7 @@ export function createBridgeSession(
   }
 
   const getDiscovery = async () => {
-    if (discovery) return discovery
+    if (discovery && now() < discoveryExpiresAt) return discovery
     if (!discoveryPromise) {
       discoveryPromise = getAccessToken()
         .then((token) =>
@@ -95,6 +110,7 @@ export function createBridgeSession(
         )
         .then((result) => {
           discovery = result
+          discoveryExpiresAt = now() + (result ? DISCOVERY_TTL_MS : DISCOVERY_NEGATIVE_TTL_MS)
           return result
         })
         .finally(() => {
@@ -108,15 +124,7 @@ export function createBridgeSession(
   const proxyChatCompletions = async (request: Request) => {
     const providerDiscovery = await getDiscovery()
     if (!providerDiscovery) {
-      return Response.json(
-        {
-          error: {
-            message: "Unable to discover an OCA upstream endpoint",
-            type: "upstream_unavailable",
-          },
-        },
-        { status: 502 },
-      )
+      return upstreamError("Unable to discover an OCA upstream endpoint")
     }
 
     const token = await getAccessToken()
@@ -147,21 +155,15 @@ export function createBridgeSession(
         method: "POST",
         headers,
         body: upstreamBody,
+        redirect: "manual",
+        signal: AbortSignal.timeout(config.requestTimeoutMs),
       })
 
       if (response.status === 404 && index < urls.length - 1) continue
       return response
     }
 
-    return Response.json(
-      {
-        error: {
-          message: "Unable to reach an OCA chat completions endpoint",
-          type: "upstream_unavailable",
-        },
-      },
-      { status: 502 },
-    )
+    return upstreamError("Unable to reach an OCA chat completions endpoint")
   }
 
   return {
