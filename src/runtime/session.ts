@@ -34,15 +34,6 @@ function buildChatCompletionUrls(baseURL: string) {
   return [`${normalized}/chat/completions`, `${normalized}/v1/chat/completions`]
 }
 
-function stripModelPrefix(rawBody: string, prefix: string): string {
-  const parsed = JSON.parse(rawBody)
-  if (typeof parsed.model === "string" && parsed.model.startsWith(prefix)) {
-    parsed.model = parsed.model.slice(prefix.length)
-    return JSON.stringify(parsed)
-  }
-  return rawBody
-}
-
 export function createBridgeSession(
   config: BridgeConfig,
   deps: BridgeSessionDeps = {},
@@ -167,9 +158,8 @@ export function createBridgeSession(
     const token = await getAccessToken()
     const rawBody = await request.text()
 
-    let upstreamBody: string
     try {
-      upstreamBody = stripModelPrefix(rawBody, `${config.providerId}/`)
+      JSON.parse(rawBody)
     } catch {
       return badRequest("Invalid JSON body")
     }
@@ -184,7 +174,7 @@ export function createBridgeSession(
     return forwardToUpstream(
       buildChatCompletionUrls(providerDiscovery.baseURL),
       headers,
-      upstreamBody,
+      rawBody,
     )
   }
 
