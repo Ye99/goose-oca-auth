@@ -8,7 +8,7 @@ test("session refreshes an expired token before discovery and caches the result"
   let discoveryCalls = 0
 
   const config = resolveBridgeConfig({
-    OCA_BASE_URL: "https://oca.example/litellm",
+    OCA_BASE_URL: "https://oca.test.oraclecloud.com/litellm",
     OCA_ACCESS_TOKEN: "expired-token",
     OCA_ACCESS_TOKEN_EXPIRES_AT: "0",
     OCA_REFRESH_TOKEN: "refresh-token",
@@ -30,7 +30,7 @@ test("session refreshes an expired token before discovery and caches the result"
     fetchImpl: (async (input, init) => {
       const url = String(input)
 
-      if (url === "https://oca.example/litellm/v1/model/info") {
+      if (url === "https://oca.test.oraclecloud.com/litellm/v1/model/info") {
         discoveryCalls += 1
         expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fresh-token")
         return Response.json({
@@ -51,7 +51,7 @@ test("session refreshes an expired token before discovery and caches the result"
   const first = await session.getDiscovery()
   const second = await session.getDiscovery()
 
-  expect(first?.baseURL).toBe("https://oca.example/litellm")
+  expect(first?.baseURL).toBe("https://oca.test.oraclecloud.com/litellm")
   expect(second?.models[0]?.id).toBe("gpt-5.3-codex")
   expect(await session.getAccessToken()).toBe("fresh-token")
   expect(refreshCalls).toBe(1)
@@ -62,7 +62,7 @@ test("session uses API key mode without refresh", async () => {
   let refreshCalls = 0
 
   const config = resolveBridgeConfig({
-    OCA_BASE_URL: "https://oca.example/litellm",
+    OCA_BASE_URL: "https://oca.test.oraclecloud.com/litellm",
     OCA_API_KEY: "api-key-token",
   })
 
@@ -76,7 +76,7 @@ test("session uses API key mode without refresh", async () => {
     },
     fetchImpl: (async (input, init) => {
       const url = String(input)
-      if (url === "https://oca.example/litellm/v1/model/info") {
+      if (url === "https://oca.test.oraclecloud.com/litellm/v1/model/info") {
         expect(new Headers(init?.headers).get("authorization")).toBe("Bearer api-key-token")
         return Response.json({ data: [] })
       }

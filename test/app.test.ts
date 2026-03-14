@@ -14,12 +14,12 @@ test("health endpoint reports bridge readiness", async () => {
 
 test("models endpoint exposes discovered models in an OpenAI-compatible list", async () => {
   const config = resolveBridgeConfig({
-    OCA_BASE_URL: "https://oca.example/litellm",
+    OCA_BASE_URL: "https://oca.test.oraclecloud.com/litellm",
     OCA_API_KEY: "api-key-token",
   })
   const session = createBridgeSession(config, {
     fetchImpl: (async (input) => {
-      if (String(input) === "https://oca.example/litellm/v1/model/info") {
+      if (String(input) === "https://oca.test.oraclecloud.com/litellm/v1/model/info") {
         return Response.json({
           data: [
             {
@@ -64,7 +64,7 @@ test("models endpoint exposes discovered models in an OpenAI-compatible list", a
 test("chat completions endpoint proxies to the first working upstream path", async () => {
   const seenUrls: string[] = []
   const config = resolveBridgeConfig({
-    OCA_BASE_URL: "https://oca.example/litellm",
+    OCA_BASE_URL: "https://oca.test.oraclecloud.com/litellm",
     OCA_API_KEY: "api-key-token",
   })
   const session = createBridgeSession(config, {
@@ -72,7 +72,7 @@ test("chat completions endpoint proxies to the first working upstream path", asy
       const url = String(input)
       seenUrls.push(url)
 
-      if (url === "https://oca.example/litellm/v1/model/info") {
+      if (url === "https://oca.test.oraclecloud.com/litellm/v1/model/info") {
         return Response.json({
           data: [
             {
@@ -83,11 +83,11 @@ test("chat completions endpoint proxies to the first working upstream path", asy
         })
       }
 
-      if (url === "https://oca.example/litellm/chat/completions") {
+      if (url === "https://oca.test.oraclecloud.com/litellm/chat/completions") {
         return new Response("not found", { status: 404 })
       }
 
-      if (url === "https://oca.example/litellm/v1/chat/completions") {
+      if (url === "https://oca.test.oraclecloud.com/litellm/v1/chat/completions") {
         expect(new Headers(init?.headers).get("authorization")).toBe("Bearer api-key-token")
         expect(await new Response(init?.body).text()).toContain("gpt-5.3-codex")
         return Response.json({
@@ -115,10 +115,10 @@ test("chat completions endpoint proxies to the first working upstream path", asy
     object: "chat.completion",
     choices: [],
   })
-  expect(seenUrls).toContain("https://oca.example/litellm/v1/model/info")
+  expect(seenUrls).toContain("https://oca.test.oraclecloud.com/litellm/v1/model/info")
   expect(seenUrls.slice(-2)).toEqual([
-    "https://oca.example/litellm/chat/completions",
-    "https://oca.example/litellm/v1/chat/completions",
+    "https://oca.test.oraclecloud.com/litellm/chat/completions",
+    "https://oca.test.oraclecloud.com/litellm/v1/chat/completions",
   ])
 })
 
