@@ -20,7 +20,7 @@ Supported environment variables:
 - `GOOSE_OCA_PORT` - bind port, default `8787`
 - `GOOSE_OCA_PROVIDER` - outward provider prefix, default `oca`
 - `GOOSE_OCA_DEFAULT_MODEL` - fallback model id, default `oca/gpt-5.4`
-- `GOOSE_OCA_REQUEST_TIMEOUT_MS` - upstream discovery timeout, default `10000`
+- `GOOSE_OCA_REQUEST_TIMEOUT_MS` - upstream request timeout, default `3600000` (1 hour)
 - `OCA_BASE_URL` - preferred upstream OCA base URL to probe first
 - `OCA_API_KEY` - API key or bearer token for direct access mode
 - `OCA_ACCESS_TOKEN` - OAuth access token for bridge-managed session mode
@@ -54,6 +54,22 @@ Example:
 ```bash
 ./scripts/install-goose-oca-auth.js ~/.config/goose http://127.0.0.1:8787
 goose run --provider oca_bridge --model oca/gpt-5.4 --no-profile --no-session --text "Reply with exactly: ok"
+```
+
+## Goose v1.27.2 bug workaround
+
+Goose custom providers support a `context_limit` field per model in the provider JSON, but Goose ignores it. When creating a `ModelConfig`, Goose calls `ModelConfig::new()` which reads `GOOSE_CONTEXT_LIMIT` via `std::env::var()` (process environment only), then `with_canonical_limits()` which checks a built-in canonical model registry. It never consults the `known_models` list from the provider registry where the custom provider's `context_limit` values are stored. Unrecognized models fall back to the hardcoded `DEFAULT_CONTEXT_LIMIT` of 128,000 tokens.
+
+Relevant Goose source locations (commit `831cb9b`):
+
+- [`model.rs:85`](https://github.com/block/goose/blob/831cb9bb82de6dec9ec1561c1e260309de11b1e6/crates/goose/src/model.rs#L85) — reads `GOOSE_CONTEXT_LIMIT` from `std::env::var()` only (not `config.yaml`)
+- [`model.rs:8`](https://github.com/block/goose/blob/831cb9bb82de6dec9ec1561c1e260309de11b1e6/crates/goose/src/model.rs#L8) — `const DEFAULT_CONTEXT_LIMIT: usize = 128_000`
+- [`builder.rs:384`](https://github.com/block/goose/blob/831cb9bb82de6dec9ec1561c1e260309de11b1e6/crates/goose-cli/src/session/builder.rs#L384) — creates `ModelConfig::new(&model_name).with_canonical_limits(&provider_name)` without looking up `known_models`
+
+**Workaround:** `scripts/start-bridge.ts` writes a wrapper script at `~/.config/goose/goose-oca` that exports the correct `GOOSE_CONTEXT_LIMIT` as an environment variable before exec-ing goose. Launch goose through this wrapper instead of directly:
+
+```bash
+~/.config/goose/goose-oca session
 ```
 
 ## Development

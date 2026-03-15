@@ -13,6 +13,8 @@
  */
 
 import { spawn } from "node:child_process"
+import { writeFile } from "node:fs/promises"
+import { join } from "node:path"
 import { resolveOauthConfig, exchangeCodeForTokens, normalizeUrl } from "oca-auth-core"
 import { createApp } from "../src/app"
 import { resolveBridgeConfig } from "../src/config"
@@ -20,6 +22,7 @@ import {
   installGooseProvider,
   resolveGooseConfigDir,
   resolveGooseProviderInstallOptions,
+  type GooseModelEntry,
 } from "../src/goose-provider"
 
 // ── PKCE helpers ──────────────────────────────────────────────────────
@@ -176,15 +179,48 @@ async function main() {
     fetch: (req) => app.handle(req),
   })
 
-  // Step 3: Ensure goose provider is installed pointing to correct port
+  const baseUrl = `http://127.0.0.1:${bridge.port}`
   const gooseConfigDir = resolveGooseConfigDir()
-  await installGooseProvider(
-    gooseConfigDir,
-    resolveGooseProviderInstallOptions(bridgeConfig, `http://127.0.0.1:${bridge.port}`),
-  )
+  const providerOptions = resolveGooseProviderInstallOptions(bridgeConfig, baseUrl)
 
-  console.log(`[bridge] Listening on http://127.0.0.1:${bridge.port}`)
+  // Step 3: Install provider with default model, then update with discovered models
+  await installGooseProvider(gooseConfigDir, providerOptions)
+
+  console.log(`[bridge] Listening on ${baseUrl}`)
   console.log("[bridge] Goose provider installed. Run: goose session")
+
+  // Step 4: Discover models and update provider config with context windows
+  try {
+    const discovery = await app.session.getDiscovery()
+    if (discovery?.models.length) {
+      const models: GooseModelEntry[] = discovery.models.map((m) => ({
+        name: m.id.startsWith(`${bridgeConfig.providerId}/`) ? m.id : `${bridgeConfig.providerId}/${m.id}`,
+        context_limit: m.contextWindow ?? 400_000,
+      }))
+      await installGooseProvider(gooseConfigDir, { ...providerOptions, models })
+      console.log(`[bridge] Updated provider config with ${models.length} discovered model(s).`)
+      // Work around Goose ignoring context_limit from custom provider JSON —
+      // Goose only reads GOOSE_CONTEXT_LIMIT from the process environment (std::env::var),
+      // not from config.yaml. Write a small shell wrapper so the user can just run `goose-oca`.
+      const defaultModelId = bridgeConfig.defaultModel.replace(`${bridgeConfig.providerId}/`, "")
+      const defaultEntry = discovery.models.find((m) => m.id === defaultModelId)
+      if (defaultEntry?.contextWindow) {
+        const wrapperPath = join(gooseConfigDir, "goose-oca")
+        const wrapperScript = [
+          "#!/bin/sh",
+          `export GOOSE_CONTEXT_LIMIT=${defaultEntry.contextWindow}`,
+          `exec goose "$@"`,
+          "",
+        ].join("\n")
+        await writeFile(wrapperPath, wrapperScript, { mode: 0o755 })
+        console.log(`[bridge] Wrote ${wrapperPath} (sets GOOSE_CONTEXT_LIMIT=${defaultEntry.contextWindow})`)
+        console.log(`[bridge] Launch goose with: ${wrapperPath} session`)
+      }
+    }
+  } catch (err) {
+    console.warn(`[bridge] Model discovery failed, using defaults: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
   console.log("[bridge] Press Ctrl-C to stop.\n")
 
   // Keep alive until SIGINT/SIGTERM

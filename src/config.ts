@@ -52,7 +52,7 @@ export function resolveBridgeConfig(
   const accessToken = env.OCA_ACCESS_TOKEN?.trim() || undefined
   const refreshToken = env.OCA_REFRESH_TOKEN?.trim() || undefined
   const rawTimeout = Number(env.GOOSE_OCA_REQUEST_TIMEOUT_MS)
-  const requestTimeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : 10_000
+  const requestTimeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : 3_600_000
 
   return {
     host,

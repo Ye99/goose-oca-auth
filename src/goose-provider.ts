@@ -4,6 +4,11 @@ import { join } from "node:path"
 import { normalizeUrl } from "oca-auth-core"
 import type { BridgeConfig } from "./config"
 
+export type GooseModelEntry = {
+  name: string
+  context_limit: number
+}
+
 export type GooseProviderOptions = {
   name?: string
   displayName?: string
@@ -11,6 +16,7 @@ export type GooseProviderOptions = {
   baseUrl: string
   defaultModel?: string
   contextLimit?: number
+  models?: GooseModelEntry[]
 }
 
 export type GooseCustomProviderConfig = {
@@ -26,7 +32,7 @@ export type GooseCustomProviderConfig = {
   }>
   supports_streaming: true
   requires_auth: false
-  dynamic_models: true
+  dynamic_models: boolean
 }
 
 function withResponsesPath(baseUrl: string) {
@@ -46,15 +52,17 @@ export function buildGooseProviderConfig(
     description: options.description ?? "Local OCA auth bridge for Goose",
     api_key_env: "",
     base_url: withResponsesPath(options.baseUrl),
-    models: [
-      {
-        name: options.defaultModel ?? "oca/gpt-5.4",
-        context_limit: options.contextLimit ?? 400_000,
-      },
-    ],
+    models: options.models?.length
+      ? options.models
+      : [
+          {
+            name: options.defaultModel ?? "oca/gpt-5.4",
+            context_limit: options.contextLimit ?? 400_000,
+          },
+        ],
     supports_streaming: true,
     requires_auth: false,
-    dynamic_models: true,
+    dynamic_models: !options.models?.length,
   }
 }
 

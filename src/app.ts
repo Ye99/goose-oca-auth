@@ -5,6 +5,7 @@ import { createBridgeSession, type BridgeSession } from "./runtime/session"
 
 export type BridgeApp = {
   config: BridgeConfig
+  session: BridgeSession
   handle(request: Request): Promise<Response>
 }
 
@@ -25,6 +26,7 @@ export function createApp(config = resolveBridgeConfig(), deps: CreateAppDeps = 
 
   return {
     config,
+    session,
     async handle(request: Request) {
       const { pathname } = new URL(request.url)
 
