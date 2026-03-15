@@ -58,6 +58,85 @@ test("session refreshes an expired token before discovery and caches the result"
   expect(discoveryCalls).toBe(1)
 })
 
+test("session caches failed discovery results until the negative TTL expires", async () => {
+  let discoveryCalls = 0
+  let nowValue = 1_000
+
+  const config = resolveBridgeConfig({
+    OCA_BASE_URL: "https://oca.test.oraclecloud.com/litellm",
+    OCA_API_KEY: "api-key-token",
+  })
+
+  const session = createBridgeSession(config, {
+    now: () => nowValue,
+    fetchImpl: (async (input) => {
+      const url = String(input)
+
+      if (url.startsWith("https://oca.test.oraclecloud.com/litellm/")) {
+        discoveryCalls += 1
+        return new Response("not found", { status: 404 })
+      }
+
+      return new Response("not found", { status: 404 })
+    }) as typeof fetch,
+  })
+
+  expect(await session.getDiscovery()).toBeUndefined()
+  const callsAfterFirstAttempt = discoveryCalls
+
+  expect(await session.getDiscovery()).toBeUndefined()
+  expect(discoveryCalls).toBe(callsAfterFirstAttempt)
+
+  nowValue += 30_001
+
+  expect(await session.getDiscovery()).toBeUndefined()
+  expect(discoveryCalls).toBeGreaterThan(callsAfterFirstAttempt)
+})
+
+test("session uses a short timeout for discovery even when responses use a long timeout", async () => {
+  const config = resolveBridgeConfig({
+    OCA_BASE_URL: "https://oca.test.oraclecloud.com/litellm",
+    OCA_API_KEY: "api-key-token",
+    GOOSE_OCA_REQUEST_TIMEOUT_MS: "3600000",
+  })
+
+  const seenTimeouts: number[] = []
+  const originalTimeout = AbortSignal.timeout
+  AbortSignal.timeout = ((delay: number) => {
+    seenTimeouts.push(delay)
+    return originalTimeout(delay)
+  }) as typeof AbortSignal.timeout
+
+  try {
+    const session = createBridgeSession(config, {
+      fetchImpl: (async (input) => {
+        const url = String(input)
+
+        if (url === "https://oca.test.oraclecloud.com/litellm/v1/model/info") {
+          return Response.json({
+            data: [
+              {
+                id: "oca/gpt-5.4",
+                model_name: "GPT 5.4",
+                litellm_params: { model: "oca/gpt-5.4" },
+              },
+            ],
+          })
+        }
+
+        return new Response("not found", { status: 404 })
+      }) as typeof fetch,
+    })
+
+    await session.getDiscovery()
+  } finally {
+    AbortSignal.timeout = originalTimeout
+  }
+
+  expect(seenTimeouts[0]).toBe(30_000)
+  expect(config.requestTimeoutMs).toBe(3_600_000)
+})
+
 test("session uses API key mode without refresh", async () => {
   let refreshCalls = 0
 
@@ -424,6 +503,77 @@ test("session restores a custom outward provider prefix in SSE Responses success
   expect(response.headers.get("content-type")).toBe("text/event-stream; charset=utf-8")
   expect(response.headers.get("cache-control")).toBe("no-store")
   expect(await response.text()).toBe(outwardSseBody)
+})
+
+test("session normalizes JSON success responses without relying on Response.clone", async () => {
+  const config = resolveBridgeConfig({
+    GOOSE_OCA_PROVIDER: "oracle",
+    OCA_BASE_URL: "https://oca.test.oraclecloud.com/litellm",
+    OCA_API_KEY: "api-key-token",
+  })
+
+  const session = createBridgeSession(config, {
+    fetchImpl: (async (input, init) => {
+      const url = String(input)
+
+      if (url === "https://oca.test.oraclecloud.com/litellm/v1/model/info") {
+        return Response.json({
+          data: [
+            {
+              id: "oca/gpt-5.4",
+              model_name: "GPT 5.4",
+              litellm_params: { model: "oca/gpt-5.4" },
+            },
+          ],
+        })
+      }
+
+      if (url === "https://oca.test.oraclecloud.com/litellm/responses") {
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer api-key-token")
+
+        const responseLike = {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: new Headers({ "content-type": "application/json" }),
+          clone() {
+            throw new Error("clone should not be used")
+          },
+          async text() {
+            return JSON.stringify({
+              id: "resp-clone-free",
+              object: "response",
+              model: "gpt-5.4",
+              output: [],
+            })
+          },
+        }
+
+        return responseLike as unknown as Response
+      }
+
+      return new Response("not found", { status: 404 })
+    }) as typeof fetch,
+  })
+
+  const response = await session.proxyResponses(
+    new Request("http://bridge.local/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "oracle/gpt-5.4",
+        input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
+      }),
+    }),
+  )
+
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual({
+    id: "resp-clone-free",
+    object: "response",
+    model: "oracle/gpt-5.4",
+    output: [],
+  })
 })
 
 test("session passes upstream non-2xx Responses bodies through unchanged", async () => {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+/// <reference types="bun-types" />
 /**
  * Start the OCA auth bridge for Goose.
  *
@@ -12,154 +13,20 @@
  * Requires: OCA_IDCS_URL and OCA_CLIENT_ID in env (or defaults).
  */
 
-import { spawn } from "node:child_process"
 import { writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { resolveOauthConfig, exchangeCodeForTokens, normalizeUrl } from "oca-auth-core"
-function openBrowser(url: string) {
-  const platform = process.platform
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open"
-  const args = platform === "darwin" ? [url] : platform === "win32" ? ["/c", "start", "", url] : [url]
-  const child = spawn(command, args, { stdio: "ignore", detached: true })
-  child.on("error", () => {})
-  child.unref()
-}
+
 import { createApp } from "../src/app"
 import { resolveBridgeConfig } from "../src/config"
 import {
+  buildGooseWrapperScript,
   installGooseProvider,
+  normalizeGooseContextLimit,
   resolveGooseConfigDir,
   resolveGooseProviderInstallOptions,
   type GooseModelEntry,
 } from "../src/goose-provider"
-
-// ── PKCE helpers ──────────────────────────────────────────────────────
-
-function random(length: number) {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
-  const limit = 256 - (256 % chars.length)
-  const result: string[] = []
-  while (result.length < length) {
-    const bytes = crypto.getRandomValues(new Uint8Array(length - result.length))
-    for (const b of bytes) {
-      if (b < limit) result.push(chars[b % chars.length])
-      if (result.length === length) break
-    }
-  }
-  return result.join("")
-}
-
-function encode(buffer: ArrayBuffer) {
-  const bytes = new Uint8Array(buffer)
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "")
-}
-
-async function pkce() {
-  const verifier = random(43)
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))
-  return { verifier, challenge: encode(hash) }
-}
-
-// ── OAuth flow ────────────────────────────────────────────────────────
-
-const CALLBACK_PORT = 48801
-const CALLBACK_PATH = "/auth/oca"
-const redirectUri = `http://127.0.0.1:${CALLBACK_PORT}${CALLBACK_PATH}`
-
-async function obtainTokens() {
-  const oauth = resolveOauthConfig(undefined, process.env)
-  const idcsUrl = normalizeUrl(oauth.idcsUrl)
-  const clientId = oauth.clientId
-
-  const codes = await pkce()
-  const state = encode(crypto.getRandomValues(new Uint8Array(32)).buffer)
-  const nonce = encode(crypto.getRandomValues(new Uint8Array(32)).buffer)
-
-  const authorizeParams = new URLSearchParams({
-    client_id: clientId,
-    response_type: "code",
-    scope: "openid offline_access",
-    code_challenge: codes.challenge,
-    code_challenge_method: "S256",
-    redirect_uri: redirectUri,
-    state,
-    nonce,
-  })
-  const authorizeUrl = `${idcsUrl}/oauth2/v1/authorize?${authorizeParams}`
-
-  return new Promise<{ access_token: string; refresh_token?: string; expires_in?: number }>(
-    (resolve, reject) => {
-      const timeout = setTimeout(() => {
-        server.stop(true)
-        reject(new Error("OAuth callback timed out after 5 minutes"))
-      }, 5 * 60 * 1000)
-
-      const server = Bun.serve({
-        hostname: "127.0.0.1",
-        port: CALLBACK_PORT,
-        async fetch(req) {
-          const url = new URL(req.url)
-          if (url.pathname !== CALLBACK_PATH) {
-            return new Response("Not found", { status: 404 })
-          }
-
-          const error = url.searchParams.get("error")
-          if (error) {
-            const desc = url.searchParams.get("error_description") ?? error
-            clearTimeout(timeout)
-            server.stop(true)
-            reject(new Error(desc))
-            return new Response(`<h1>Error</h1><p>${desc}</p>`, {
-              headers: { "content-type": "text/html" },
-            })
-          }
-
-          const code = url.searchParams.get("code")
-          const returnedState = url.searchParams.get("state")
-
-          if (!code || returnedState !== state) {
-            clearTimeout(timeout)
-            server.stop(true)
-            reject(new Error("Invalid callback: missing code or state mismatch"))
-            return new Response("Bad request", { status: 400 })
-          }
-
-          try {
-            const tokens = await exchangeCodeForTokens(
-              idcsUrl,
-              clientId,
-              code,
-              redirectUri,
-              codes.verifier,
-            )
-            clearTimeout(timeout)
-            setTimeout(() => server.stop(true), 2000)
-            resolve(tokens)
-            return new Response(
-              "<h1>Success!</h1><p>You can close this tab.</p><script>setTimeout(()=>window.close(),1500)</script>",
-              { headers: { "content-type": "text/html" } },
-            )
-          } catch (err) {
-            clearTimeout(timeout)
-            setTimeout(() => server.stop(true), 1000)
-            reject(err)
-            return new Response(`<h1>Token exchange failed</h1><p>${err}</p>`, {
-              status: 500,
-              headers: { "content-type": "text/html" },
-            })
-          }
-        },
-      })
-
-      console.log("[bridge] Opening browser for IDCS login...")
-      console.log(`[bridge] If browser doesn't open, visit:\n  ${authorizeUrl}\n`)
-      openBrowser(authorizeUrl)
-    },
-  )
-}
+import { obtainTokens } from "./shared/oauth"
 
 // ── Main ──────────────────────────────────────────────────────────────
 
@@ -168,7 +35,7 @@ async function main() {
 
   // Step 1: OAuth login
   console.log("[bridge] Authenticating with Oracle IDCS...")
-  const tokens = await obtainTokens()
+  const tokens = await obtainTokens({ logPrefix: "bridge" })
   console.log("[bridge] Authentication successful.")
 
   // Step 2: Start bridge
@@ -203,7 +70,7 @@ async function main() {
     if (discovery?.models.length) {
       const models: GooseModelEntry[] = discovery.models.map((m) => ({
         name: m.id.startsWith(`${bridgeConfig.providerId}/`) ? m.id : `${bridgeConfig.providerId}/${m.id}`,
-        context_limit: m.contextWindow ?? 400_000,
+        context_limit: normalizeGooseContextLimit(m.contextWindow, 400_000) ?? 400_000,
       }))
       await installGooseProvider(gooseConfigDir, { ...providerOptions, models })
       console.log(`[bridge] Updated provider config with ${models.length} discovered model(s).`)
@@ -212,16 +79,12 @@ async function main() {
       // not from config.yaml. Write a small shell wrapper so the user can just run `goose-oca`.
       const defaultModelId = bridgeConfig.defaultModel.replace(`${bridgeConfig.providerId}/`, "")
       const defaultEntry = discovery.models.find((m) => m.id === defaultModelId)
-      if (defaultEntry?.contextWindow) {
+      const contextLimit = defaultEntry?.contextWindow
+      const wrapperScript = buildGooseWrapperScript(defaultEntry?.contextWindow)
+      if (wrapperScript && typeof contextLimit === "number" && Number.isFinite(contextLimit)) {
         const wrapperPath = join(gooseConfigDir, "goose-oca")
-        const wrapperScript = [
-          "#!/bin/sh",
-          `export GOOSE_CONTEXT_LIMIT=${defaultEntry.contextWindow}`,
-          `exec goose "$@"`,
-          "",
-        ].join("\n")
         await writeFile(wrapperPath, wrapperScript, { mode: 0o755 })
-        console.log(`[bridge] Wrote ${wrapperPath} (sets GOOSE_CONTEXT_LIMIT=${defaultEntry.contextWindow})`)
+        console.log(`[bridge] Wrote ${wrapperPath} (sets GOOSE_CONTEXT_LIMIT=${Math.trunc(contextLimit)})`)
         console.log(`[bridge] Launch goose with: ${wrapperPath} session`)
       }
     }

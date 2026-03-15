@@ -84,6 +84,31 @@ export function resolveGooseConfigDir(
   return join(env.HOME?.trim() || homedir(), ".config", "goose")
 }
 
+export function normalizeGooseContextLimit(
+  contextLimit: unknown,
+  fallback?: number,
+) {
+  if (typeof contextLimit === "number" && Number.isFinite(contextLimit) && contextLimit > 0) {
+    return Math.trunc(contextLimit)
+  }
+
+  if (typeof fallback === "number" && Number.isFinite(fallback) && fallback > 0) {
+    return Math.trunc(fallback)
+  }
+}
+
+export function buildGooseWrapperScript(contextLimit: unknown) {
+  const normalized = normalizeGooseContextLimit(contextLimit)
+  if (!normalized) return
+
+  return [
+    "#!/bin/sh",
+    `export GOOSE_CONTEXT_LIMIT=${normalized}`,
+    'exec goose "$@"',
+    "",
+  ].join("\n")
+}
+
 export async function installGooseProvider(
   gooseConfigDir: string,
   options: GooseProviderOptions,

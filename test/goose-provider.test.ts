@@ -8,6 +8,7 @@ import { resolveBridgeConfig } from "../src/config"
 import {
   buildGooseProviderConfig,
   installGooseProvider,
+  normalizeGooseContextLimit,
   resolveGooseProviderInstallOptions,
   resolveGooseConfigDir,
 } from "../src/goose-provider"
@@ -54,6 +55,21 @@ test("shared Goose install options keep the resolved default model for custom pr
     baseUrl: "http://127.0.0.1:8787",
     defaultModel: "oracle/gpt-5.4",
   })
+})
+
+test("buildGooseWrapperScript ignores non-numeric context limits", async () => {
+  const module = await import("../src/goose-provider")
+  const buildGooseWrapperScript = (module as { buildGooseWrapperScript?: (value: unknown) => string | undefined }).buildGooseWrapperScript
+
+  expect(buildGooseWrapperScript?.("200000\nrm -rf /" as unknown)).toBeUndefined()
+  expect(buildGooseWrapperScript?.(Number.NaN)).toBeUndefined()
+  expect(buildGooseWrapperScript?.(200000)).toBe('#!/bin/sh\nexport GOOSE_CONTEXT_LIMIT=200000\nexec goose "$@"\n')
+})
+
+test("normalizeGooseContextLimit coerces valid numbers and falls back for invalid discovery values", () => {
+  expect(normalizeGooseContextLimit(200000.9)).toBe(200000)
+  expect(normalizeGooseContextLimit("200000\nrm -rf /" as unknown, 400000)).toBe(400000)
+  expect(normalizeGooseContextLimit(Number.NaN, 400000)).toBe(400000)
 })
 
 test("installGooseProvider writes the provider JSON into Goose custom_providers", async () => {

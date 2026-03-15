@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+/// <reference types="bun-types" />
 /**
  * Real end-to-end test: PKCE OAuth login → bridge server → goose CLI.
  *
@@ -11,155 +12,17 @@
  */
 
 import { spawn } from "node:child_process"
-import { resolveOauthConfig, exchangeCodeForTokens, normalizeUrl, nonEmpty } from "oca-auth-core"
-function openBrowser(url: string) {
-  const platform = process.platform
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open"
-  const args = platform === "darwin" ? [url] : platform === "win32" ? ["/c", "start", "", url] : [url]
-  const child = spawn(command, args, { stdio: "ignore", detached: true })
-  child.on("error", () => {})
-  child.unref()
-}
+
+import { normalizeUrl, resolveOauthConfig } from "oca-auth-core"
+
 import { createApp } from "../src/app"
 import { resolveBridgeConfig } from "../src/config"
 import { installGooseProvider, resolveGooseConfigDir } from "../src/goose-provider"
-
-// ── PKCE helpers ──────────────────────────────────────────────────────
-
-function random(length: number) {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
-  const limit = 256 - (256 % chars.length)
-  const result: string[] = []
-  while (result.length < length) {
-    const bytes = crypto.getRandomValues(new Uint8Array(length - result.length))
-    for (const b of bytes) {
-      if (b < limit) result.push(chars[b % chars.length])
-      if (result.length === length) break
-    }
-  }
-  return result.join("")
-}
-
-function encode(buffer: ArrayBuffer) {
-  const bytes = new Uint8Array(buffer)
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "")
-}
-
-async function pkce() {
-  const verifier = random(43)
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))
-  return { verifier, challenge: encode(hash) }
-}
+import { obtainTokens } from "./shared/oauth"
 
 function stripProviderPrefix(modelId: string) {
   const slashIndex = modelId.indexOf("/")
   return slashIndex >= 0 ? modelId.slice(slashIndex + 1) : modelId
-}
-
-// ── OAuth flow ────────────────────────────────────────────────────────
-
-const CALLBACK_PORT = 48801
-const CALLBACK_PATH = "/auth/oca"
-const redirectUri = `http://127.0.0.1:${CALLBACK_PORT}${CALLBACK_PATH}`
-
-async function obtainTokens() {
-  const oauth = resolveOauthConfig(undefined, process.env)
-  const idcsUrl = normalizeUrl(oauth.idcsUrl)
-  const clientId = oauth.clientId
-
-  console.log(`[e2e] IDCS URL: ${idcsUrl}`)
-  console.log(`[e2e] Client ID: ${clientId}`)
-
-  const codes = await pkce()
-  const state = encode(crypto.getRandomValues(new Uint8Array(32)).buffer)
-  const nonce = encode(crypto.getRandomValues(new Uint8Array(32)).buffer)
-
-  const authorizeParams = new URLSearchParams({
-    client_id: clientId,
-    response_type: "code",
-    scope: "openid offline_access",
-    code_challenge: codes.challenge,
-    code_challenge_method: "S256",
-    redirect_uri: redirectUri,
-    state,
-    nonce,
-  })
-  const authorizeUrl = `${idcsUrl}/oauth2/v1/authorize?${authorizeParams}`
-
-  return new Promise<{ access_token: string; refresh_token?: string; expires_in?: number }>(
-    (resolve, reject) => {
-      const timeout = setTimeout(() => {
-        server.stop(true)
-        reject(new Error("OAuth callback timed out after 5 minutes"))
-      }, 5 * 60 * 1000)
-
-      const server = Bun.serve({
-        hostname: "127.0.0.1",
-        port: CALLBACK_PORT,
-        async fetch(req) {
-          const url = new URL(req.url)
-          if (url.pathname !== CALLBACK_PATH) {
-            return new Response("Not found", { status: 404 })
-          }
-
-          const error = url.searchParams.get("error")
-          if (error) {
-            const desc = url.searchParams.get("error_description") ?? error
-            clearTimeout(timeout)
-            server.stop(true)
-            reject(new Error(desc))
-            return new Response(`<h1>Error</h1><p>${desc}</p>`, {
-              headers: { "content-type": "text/html" },
-            })
-          }
-
-          const code = url.searchParams.get("code")
-          const returnedState = url.searchParams.get("state")
-
-          if (!code || returnedState !== state) {
-            clearTimeout(timeout)
-            server.stop(true)
-            reject(new Error("Invalid callback: missing code or state mismatch"))
-            return new Response("Bad request", { status: 400 })
-          }
-
-          try {
-            console.log("[e2e] Exchanging authorization code for tokens...")
-            const tokens = await exchangeCodeForTokens(
-              idcsUrl,
-              clientId,
-              code,
-              redirectUri,
-              codes.verifier,
-            )
-            clearTimeout(timeout)
-            // Keep server alive briefly so browser can load the success page
-            setTimeout(() => server.stop(true), 2000)
-            resolve(tokens)
-            return new Response(
-              "<h1>Success!</h1><p>You can close this tab.</p><script>setTimeout(()=>window.close(),1500)</script>",
-              { headers: { "content-type": "text/html" } },
-            )
-          } catch (err) {
-            clearTimeout(timeout)
-            setTimeout(() => server.stop(true), 1000)
-            reject(err)
-            return new Response(`<h1>Token exchange failed</h1><p>${err}</p>`, {
-              status: 500,
-              headers: { "content-type": "text/html" },
-            })
-          }
-        },
-      })
-
-      console.log(`[e2e] Opening browser for IDCS login...`)
-      console.log(`[e2e] If browser doesn't open, visit:\n  ${authorizeUrl}\n`)
-      openBrowser(authorizeUrl)
-    },
-  )
 }
 
 // ── Main ──────────────────────────────────────────────────────────────
@@ -169,7 +32,10 @@ async function main() {
 
   // Step 1: Obtain real OAuth tokens
   console.log("[e2e] Step 1: Obtaining OAuth tokens via PKCE flow...")
-  const tokens = await obtainTokens()
+  const oauth = resolveOauthConfig(undefined, process.env)
+  console.log(`[e2e] IDCS URL: ${normalizeUrl(oauth.idcsUrl)}`)
+  console.log(`[e2e] Client ID: ${oauth.clientId}`)
+  const tokens = await obtainTokens({ logPrefix: "e2e" })
   console.log(`[e2e] Got access token (${tokens.access_token.slice(0, 12)}...)`)
   // Decode JWT payload to check scopes
   try {

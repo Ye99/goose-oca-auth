@@ -140,21 +140,37 @@ async function normalizeResponsesSuccess(response: Response, providerId: string)
 
   if (!normalizedContentType?.includes("application/json")) return response
 
-  let parsed: unknown
+  let rawBody: string
   try {
-    parsed = await response.clone().json()
+    rawBody = await response.text()
   } catch {
     return response
   }
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return response
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(rawBody)
+  } catch {
+    return new Response(rawBody, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    })
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return new Response(rawBody, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    })
+  }
 
   const normalized = restoreProviderPrefix(parsed as Record<string, unknown>, providerId)
-  if (normalized === parsed) return response
 
   const headers = new Headers(response.headers)
   headers.delete("content-length")
-  return new Response(JSON.stringify(normalized), {
+  return new Response(normalized === parsed ? rawBody : JSON.stringify(normalized), {
     status: response.status,
     statusText: response.statusText,
     headers,
@@ -177,6 +193,7 @@ export function createBridgeSession(
 
   const DISCOVERY_TTL_MS = 5 * 60 * 1000
   const DISCOVERY_NEGATIVE_TTL_MS = 30 * 1000
+  const DISCOVERY_TIMEOUT_MS = 30 * 1000
 
   let discovery: ProviderDiscovery | undefined
   let discoveryExpiresAt = 0
@@ -228,7 +245,7 @@ export function createBridgeSession(
   }
 
   const getDiscovery = async () => {
-    if (discovery && now() < discoveryExpiresAt) return discovery
+    if (now() < discoveryExpiresAt) return discovery
     if (!discoveryPromise) {
       discoveryPromise = getAccessToken()
         .then((token) =>
@@ -236,7 +253,7 @@ export function createBridgeSession(
             token,
             baseUrls: config.upstreamBaseUrl ? [config.upstreamBaseUrl] : undefined,
             fetchImpl,
-            timeoutMs: config.requestTimeoutMs,
+            timeoutMs: DISCOVERY_TIMEOUT_MS,
           }),
         )
         .then((result) => {
