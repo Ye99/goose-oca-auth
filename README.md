@@ -80,6 +80,20 @@ bun test
 bun run typecheck
 ```
 
+To run the live stream-decode diagnostic against a local bridge on `http://127.0.0.1:8787`:
+
+```bash
+bun run diag:stream-decode
+```
+
+The command is a repro-check: it exits `0` when the fenced-output stream failure pattern is confirmed, and non-zero when the pattern is not reproduced cleanly.
+
+Optional overrides:
+
+```bash
+BRIDGE_BASE_URL=http://127.0.0.1:8787 BRIDGE_MODEL=oca/gpt-5.4 bun run diag:stream-decode path/to/file.md
+```
+
 The test suite includes a Goose CLI end-to-end regression that uses the installed `goose` binary on this host with isolated XDG directories.
 
 This scaffold depends on the shared OCA auth core via a local path dependency:
