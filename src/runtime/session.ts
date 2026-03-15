@@ -22,7 +22,8 @@ type MutableAuthState = {
 }
 
 function toBearer(value: string) {
-  return value.startsWith("Bearer ") ? value : `Bearer ${value}`
+  const trimmed = value.trim()
+  return /^bearer\s+/i.test(trimmed) ? trimmed : `Bearer ${trimmed}`
 }
 
 function stripTrailingSlashes(value: string) {

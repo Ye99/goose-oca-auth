@@ -21,3 +21,15 @@ test("real e2e script probes the native Responses endpoint", async () => {
   expect(script).not.toContain("chat/completions")
   expect(script).not.toContain("gpt-5.3-codex")
 })
+
+test("scripts use cross-platform browser opener helper", async () => {
+  for (const file of ["start-bridge.ts", "real-e2e.ts"]) {
+    const script = await readFile(resolve(rootDir, "scripts", file), "utf8")
+    expect(script).toContain("function openBrowser(url: string)")
+    expect(script).toContain('const platform = process.platform')
+    expect(script).toContain('platform === "darwin" ? "open"')
+    expect(script).toContain('platform === "win32" ? "cmd"')
+    expect(script).toContain(': "xdg-open"')
+    expect(script).not.toContain('spawn("open", [authorizeUrl]')
+  }
+})

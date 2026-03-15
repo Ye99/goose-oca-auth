@@ -25,6 +25,14 @@ function parseExpiresAt(value?: string): number | undefined {
   return Number.isNaN(dateValue) ? undefined : dateValue
 }
 
+function normalizeProviderId(value?: string) {
+  const next = value?.trim() || "oca"
+  if (!/^[A-Za-z0-9._-]+$/.test(next)) {
+    throw new Error(`Invalid GOOSE_OCA_PROVIDER: ${JSON.stringify(next)}. Expected only letters, numbers, dot, underscore, or dash.`)
+  }
+  return next
+}
+
 function normalizeDefaultModel(providerId: string, value?: string) {
   const next = value?.trim()
   if (!next) return `${providerId}/gpt-5.4`
@@ -44,8 +52,8 @@ export function resolveBridgeConfig(
     )
   }
   const rawPort = Number(env.GOOSE_OCA_PORT)
-  const port = Number.isFinite(rawPort) && rawPort > 0 ? rawPort : 8787
-  const providerId = env.GOOSE_OCA_PROVIDER?.trim() || "oca"
+  const port = Number.isFinite(rawPort) && rawPort >= 0 ? rawPort : 8787
+  const providerId = normalizeProviderId(env.GOOSE_OCA_PROVIDER)
   const defaultModel = normalizeDefaultModel(providerId, env.GOOSE_OCA_DEFAULT_MODEL)
   const upstreamBaseUrl = env.OCA_BASE_URL?.trim() || undefined
   const apiKey = env.OCA_API_KEY?.trim() || undefined

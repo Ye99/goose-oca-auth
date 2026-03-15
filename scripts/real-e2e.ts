@@ -12,6 +12,14 @@
 
 import { spawn } from "node:child_process"
 import { resolveOauthConfig, exchangeCodeForTokens, normalizeUrl, nonEmpty } from "oca-auth-core"
+function openBrowser(url: string) {
+  const platform = process.platform
+  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open"
+  const args = platform === "darwin" ? [url] : platform === "win32" ? ["/c", "start", "", url] : [url]
+  const child = spawn(command, args, { stdio: "ignore", detached: true })
+  child.on("error", () => {})
+  child.unref()
+}
 import { createApp } from "../src/app"
 import { resolveBridgeConfig } from "../src/config"
 import { installGooseProvider, resolveGooseConfigDir } from "../src/goose-provider"
@@ -149,7 +157,7 @@ async function obtainTokens() {
 
       console.log(`[e2e] Opening browser for IDCS login...`)
       console.log(`[e2e] If browser doesn't open, visit:\n  ${authorizeUrl}\n`)
-      spawn("open", [authorizeUrl], { stdio: "ignore" })
+      openBrowser(authorizeUrl)
     },
   )
 }

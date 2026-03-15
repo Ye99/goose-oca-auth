@@ -547,3 +547,49 @@ test("session strips a custom outward provider prefix before forwarding Response
     output: [],
   })
 })
+
+test("proxyResponses accepts case-insensitive bearer tokens with surrounding whitespace", async () => {
+  const config = resolveBridgeConfig({
+    OCA_BASE_URL: "https://oca.test.oraclecloud.com/litellm",
+    OCA_API_KEY: "  bearer api-key-token  ",
+  })
+  const seenAuth: string[] = []
+  const session = createBridgeSession(config, {
+    fetchImpl: (async (input, init) => {
+      const url = String(input)
+
+      if (url === "https://oca.test.oraclecloud.com/litellm/v1/model/info") {
+        return Response.json({
+          data: [
+            {
+              id: "oca/gpt-5.4",
+              model_name: "GPT 5.4",
+              litellm_params: { model: "oca/gpt-5.4" },
+            },
+          ],
+        })
+      }
+
+      if (url === "https://oca.test.oraclecloud.com/litellm/responses") {
+        seenAuth.push(new Headers(init?.headers).get("authorization") ?? "")
+        return Response.json({ id: "resp-1", object: "response", model: "gpt-5.4", output: [] })
+      }
+
+      return new Response("not found", { status: 404 })
+    }) as typeof fetch,
+  })
+
+  const response = await session.proxyResponses(
+    new Request("http://bridge.local/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "oca/gpt-5.4",
+        input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
+      }),
+    }),
+  )
+
+  expect(response.status).toBe(200)
+  expect(seenAuth).toEqual(["bearer api-key-token"])
+})

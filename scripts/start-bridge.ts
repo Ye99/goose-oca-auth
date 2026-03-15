@@ -16,6 +16,14 @@ import { spawn } from "node:child_process"
 import { writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { resolveOauthConfig, exchangeCodeForTokens, normalizeUrl } from "oca-auth-core"
+function openBrowser(url: string) {
+  const platform = process.platform
+  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open"
+  const args = platform === "darwin" ? [url] : platform === "win32" ? ["/c", "start", "", url] : [url]
+  const child = spawn(command, args, { stdio: "ignore", detached: true })
+  child.on("error", () => {})
+  child.unref()
+}
 import { createApp } from "../src/app"
 import { resolveBridgeConfig } from "../src/config"
 import {
@@ -148,7 +156,7 @@ async function obtainTokens() {
 
       console.log("[bridge] Opening browser for IDCS login...")
       console.log(`[bridge] If browser doesn't open, visit:\n  ${authorizeUrl}\n`)
-      spawn("open", [authorizeUrl], { stdio: "ignore" })
+      openBrowser(authorizeUrl)
     },
   )
 }
