@@ -16,7 +16,7 @@
 import { writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import { createApp } from "../src/app"
+import { createApp, createBridgeServerOptions } from "../src/app"
 import { resolveBridgeConfig } from "../src/config"
 import {
   buildGooseWrapperScript,
@@ -48,11 +48,7 @@ async function main() {
       : undefined,
   })
   const app = createApp(bridgeConfig)
-  const bridge = Bun.serve({
-    hostname: bridgeConfig.host,
-    port: bridgeConfig.port,
-    fetch: (req) => app.handle(req),
-  })
+  const bridge = Bun.serve(createBridgeServerOptions(app))
 
   const baseUrl = `http://127.0.0.1:${bridge.port}`
   const gooseConfigDir = resolveGooseConfigDir()

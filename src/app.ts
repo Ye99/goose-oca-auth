@@ -13,6 +13,11 @@ type CreateAppDeps = {
   session?: BridgeSession
 }
 
+type BridgeServerOverrides = {
+  hostname?: string
+  port?: number
+}
+
 async function withUpstreamErrorHandling(fn: () => Promise<Response>): Promise<Response> {
   try {
     return await fn()
@@ -49,6 +54,20 @@ export function createApp(config = resolveBridgeConfig(), deps: CreateAppDeps = 
       }
 
       return new Response("Not found", { status: 404 })
+    },
+  }
+}
+
+export function createBridgeServerOptions(
+  app: BridgeApp,
+  overrides: BridgeServerOverrides = {},
+) {
+  return {
+    hostname: overrides.hostname ?? app.config.host,
+    port: overrides.port ?? app.config.port,
+    idleTimeout: Math.max(1, Math.ceil(app.config.requestTimeoutMs / 1000)),
+    fetch(request: Request) {
+      return app.handle(request)
     },
   }
 }

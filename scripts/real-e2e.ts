@@ -15,7 +15,7 @@ import { spawn } from "node:child_process"
 
 import { normalizeUrl, resolveOauthConfig } from "oca-auth-core"
 
-import { createApp } from "../src/app"
+import { createApp, createBridgeServerOptions } from "../src/app"
 import { resolveBridgeConfig } from "../src/config"
 import { installGooseProvider, resolveGooseConfigDir } from "../src/goose-provider"
 import { obtainTokens } from "./shared/oauth"
@@ -63,11 +63,7 @@ async function main() {
     OCA_BASE_URL: process.env.OCA_BASE_URL,
   })
   const app = createApp(bridgeConfig)
-  const bridge = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch: (req) => app.handle(req),
-  })
+  const bridge = Bun.serve(createBridgeServerOptions(app, { hostname: "127.0.0.1", port: 0 }))
   const bridgeUrl = `http://127.0.0.1:${bridge.port}`
   console.log(`[e2e] Bridge listening on ${bridgeUrl}`)
 

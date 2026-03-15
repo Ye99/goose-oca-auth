@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 
-import { createApp } from "../src/app"
+import { createApp, createBridgeServerOptions } from "../src/app"
 import { resolveBridgeConfig } from "../src/config"
 import { createBridgeSession } from "../src/runtime/session"
 
@@ -10,6 +10,19 @@ test("health endpoint reports bridge readiness", async () => {
 
   expect(response.status).toBe(200)
   expect(await response.json()).toEqual({ ok: true, service: "goose-oca-auth" })
+})
+
+test("bridge server options align Bun idleTimeout with the request timeout", () => {
+  const config = resolveBridgeConfig({
+    GOOSE_OCA_REQUEST_TIMEOUT_MS: "61000",
+  })
+
+  const app = createApp(config)
+  const serverOptions = createBridgeServerOptions(app)
+
+  expect(serverOptions.hostname).toBe("127.0.0.1")
+  expect(serverOptions.port).toBe(8787)
+  expect(serverOptions.idleTimeout).toBe(61)
 })
 
 test("models endpoint exposes discovered models in an OpenAI-compatible list", async () => {
