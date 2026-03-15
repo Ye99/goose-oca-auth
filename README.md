@@ -2,13 +2,15 @@
 
 OpenAI-compatible local bridge for using OCA models from Goose via `POST /v1/responses`.
 
+The installed Goose custom provider now advertises streaming Responses support, so Goose can stay on its expected streaming path instead of failing with `Non Streaming Request are not supported` against Responses-only bridges.
+
 Current bridge behavior:
 
 - `GET /health` returns readiness status
 - `GET /v1/models` discovers OCA models through the shared core and returns an OpenAI-compatible model list
 - `POST /v1/responses` proxies requests to the first working OCA responses endpoint
 - auto-refreshes expired access tokens when `OCA_REFRESH_TOKEN` is available
-- `scripts/install-goose-oca-auth.js` installs a Goose custom-provider JSON that points Goose at the bridge
+- `scripts/install-goose-oca-auth.js` installs a Goose custom-provider JSON that points Goose at the bridge and marks Responses streaming as supported
 
 ## Configuration
 
@@ -35,7 +37,7 @@ bun src/index.ts
 
 ## Install into Goose
 
-This writes `oca_bridge.json` into Goose's `custom_providers` directory and points Goose at the bridge's `/v1/responses` endpoint.
+This writes `oca_bridge.json` into Goose's `custom_providers` directory, points Goose at the bridge's `/v1/responses` endpoint, and enables Goose's streaming Responses mode for the provider.
 
 ```bash
 ./scripts/install-goose-oca-auth.js

@@ -30,7 +30,7 @@ test("buildGooseProviderConfig emits a Goose custom provider config for the brid
         context_limit: 400000,
       },
     ],
-    supports_streaming: false,
+    supports_streaming: true,
     requires_auth: false,
     dynamic_models: true,
   })
@@ -94,11 +94,12 @@ test("installer script is directly executable", async () => {
 
     expect(result.status).toBe(0)
     expect(result.stdout).toContain("Installed Goose custom provider")
-    expect(
-      JSON.parse(
-        await readFile(join(configDir, "custom_providers", "oca_bridge.json"), "utf8"),
-      ).models[0]?.name,
-    ).toBe("oracle/gpt-5.4")
+    const installedProvider = JSON.parse(
+      await readFile(join(configDir, "custom_providers", "oca_bridge.json"), "utf8"),
+    )
+
+    expect(installedProvider.models[0]?.name).toBe("oracle/gpt-5.4")
+    expect(installedProvider.supports_streaming).toBe(true)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

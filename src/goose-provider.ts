@@ -24,7 +24,7 @@ export type GooseCustomProviderConfig = {
     name: string
     context_limit: number
   }>
-  supports_streaming: false
+  supports_streaming: true
   requires_auth: false
   dynamic_models: true
 }
@@ -52,7 +52,7 @@ export function buildGooseProviderConfig(
         context_limit: options.contextLimit ?? 400_000,
       },
     ],
-    supports_streaming: false,
+    supports_streaming: true,
     requires_auth: false,
     dynamic_models: true,
   }

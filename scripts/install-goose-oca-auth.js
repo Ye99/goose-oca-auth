@@ -17,4 +17,5 @@ const filePath = await installGooseProvider(
 )
 
 console.log(`Installed Goose custom provider at ${filePath}`)
+console.log("Provider is configured for Goose streaming Responses mode.")
 console.log(`Example: goose run --provider oca_bridge --model ${bridgeConfig.defaultModel} --no-profile --no-session --text "Reply with exactly: ok"`)

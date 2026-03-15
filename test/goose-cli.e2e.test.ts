@@ -35,6 +35,7 @@ test("Goose can use the installed OCA bridge custom provider end-to-end", async 
   const root = await mkdtemp(join(tmpdir(), "goose-oca-e2e-"))
   const seenAuth: string[] = []
   const seenBridgePaths: string[] = []
+  const seenBridgeBodies: Array<Record<string, unknown>> = []
   const seenUpstreamPaths: string[] = []
   const seenUpstreamBodies: Array<Record<string, unknown>> = []
 
@@ -59,15 +60,28 @@ test("Goose can use the installed OCA bridge custom provider end-to-end", async 
       }
 
       if (url.pathname === "/responses") {
-        seenUpstreamBodies.push(await request.json())
-        return Response.json({
+        const body = (await request.json()) as Record<string, unknown>
+        seenUpstreamBodies.push(body)
+
+        if (body.stream !== true) {
+          return Response.json(
+            {
+              error: {
+                message: "expected Goose to request streaming responses",
+              },
+            },
+            { status: 400 },
+          )
+        }
+
+        const completedResponse = {
           id: "resp-test",
           object: "response",
           created_at: 0,
           status: "completed",
           error: null,
           incomplete_details: null,
-          model: "oca/gpt-5.3-codex",
+          model: "gpt-5.3-codex",
           output: [
             {
               id: "msg-test",
@@ -77,22 +91,42 @@ test("Goose can use the installed OCA bridge custom provider end-to-end", async 
               content: [{ type: "output_text", text: "ok", annotations: [] }],
             },
           ],
-          parallel_tool_calls: true,
-          store: false,
-          tools: [],
-          tool_choice: "auto",
-          temperature: 1,
-          top_p: 1,
-          text: { format: { type: "text" } },
-          truncation: "disabled",
-          usage: {
-            input_tokens: 1,
-            input_tokens_details: { cached_tokens: 0 },
-            total_tokens: 2,
-            output_tokens: 1,
-            output_tokens_details: { reasoning_tokens: 0 },
+        }
+
+        const sseBody = [
+          "event: response.created\n",
+          'data: {"type":"response.created","sequence_number":0,"response":{"id":"resp-test","object":"response","created_at":0,"status":"in_progress","model":"gpt-5.3-codex","output":[]}}\n\n',
+          "event: response.output_item.added\n",
+          'data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"msg-test","type":"message","status":"in_progress","role":"assistant","content":[]}}\n\n',
+          "event: response.content_part.added\n",
+          'data: {"type":"response.content_part.added","sequence_number":2,"item_id":"msg-test","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}\n\n',
+          "event: response.output_text.delta\n",
+          'data: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg-test","output_index":0,"content_index":0,"delta":"ok"}\n\n',
+          "event: response.output_text.done\n",
+          'data: {"type":"response.output_text.done","sequence_number":4,"item_id":"msg-test","output_index":0,"content_index":0,"text":"ok"}\n\n',
+          "event: response.content_part.done\n",
+          'data: {"type":"response.content_part.done","sequence_number":5,"item_id":"msg-test","output_index":0,"content_index":0,"part":{"type":"output_text","text":"ok","annotations":[]}}\n\n',
+          "event: response.output_item.done\n",
+          'data: {"type":"response.output_item.done","sequence_number":6,"output_index":0,"item":{"id":"msg-test","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"ok","annotations":[]}]}}\n\n',
+          "event: response.completed\n",
+          `data: ${JSON.stringify({ type: "response.completed", sequence_number: 7, response: completedResponse })}\n\n`,
+        ].join("")
+
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(sseBody))
+              controller.close()
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "text/event-stream; charset=utf-8",
+              "cache-control": "no-store",
+            },
           },
-        })
+        )
       }
 
       return new Response("not found", { status: 404 })
@@ -108,8 +142,11 @@ test("Goose can use the installed OCA bridge custom provider end-to-end", async 
   const bridge = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: (request) => {
+    fetch: async (request) => {
       seenBridgePaths.push(new URL(request.url).pathname)
+      if (request.method === "POST" && new URL(request.url).pathname === "/v1/responses") {
+        seenBridgeBodies.push((await request.clone().json()) as Record<string, unknown>)
+      }
       return app.handle(request)
     },
   })
@@ -154,6 +191,14 @@ test("Goose can use the installed OCA bridge custom provider end-to-end", async 
     expect(seenAuth).toContain("Bearer bridge-test-token")
     expect(seenBridgePaths.length).toBeGreaterThan(0)
     expect(seenBridgePaths.every((path) => path === "/v1/responses")).toBe(true)
+    expect(seenBridgeBodies.length).toBeGreaterThan(0)
+    for (const body of seenBridgeBodies) {
+      expect(body).toMatchObject({
+        model: "oca/gpt-5.3-codex",
+        store: false,
+        stream: true,
+      })
+    }
     expect(seenUpstreamPaths).toContain("/responses")
     expect(seenUpstreamPaths).not.toContain("/chat/completions")
     expect(seenUpstreamPaths).not.toContain("/v1/chat/completions")
@@ -162,7 +207,7 @@ test("Goose can use the installed OCA bridge custom provider end-to-end", async 
       expect(body).toMatchObject({
         model: "gpt-5.3-codex",
         store: false,
-        stream: false,
+        stream: true,
       })
     }
 

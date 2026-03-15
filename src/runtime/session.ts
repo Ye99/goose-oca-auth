@@ -52,11 +52,92 @@ function restoreProviderPrefix(body: Record<string, unknown>, providerId: string
   return body
 }
 
+function normalizeSsePayload(body: Record<string, unknown>, providerId: string): Record<string, unknown> {
+  const normalized = restoreProviderPrefix(body, providerId)
+  const response = normalized.response
+  if (!response || typeof response !== "object" || Array.isArray(response)) return normalized
+
+  const normalizedResponse = restoreProviderPrefix(response as Record<string, unknown>, providerId)
+  if (normalizedResponse === response) return normalized
+
+  return { ...normalized, response: normalizedResponse }
+}
+
+function normalizeSseLine(line: string, providerId: string): string {
+  if (!line.startsWith("data:")) return line
+
+  const value = line.slice(5)
+  const trimmed = value.trimStart()
+  if (!trimmed.startsWith("{")) return line
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return line
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return line
+
+  const normalized = normalizeSsePayload(parsed as Record<string, unknown>, providerId)
+  if (normalized === parsed) return line
+
+  return `${line.slice(0, 5)} ${JSON.stringify(normalized)}`
+}
+
+function normalizeSseChunk(chunk: string, providerId: string): string {
+  return chunk
+    .split("\n")
+    .map((line) => normalizeSseLine(line, providerId))
+    .join("\n")
+}
+
+function normalizeResponsesEventStream(response: Response, providerId: string): Response {
+  if (!response.body) return response
+
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  let buffer = ""
+
+  const body = response.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffer += decoder.decode(chunk, { stream: true })
+
+        const lastNewlineIndex = buffer.lastIndexOf("\n")
+        if (lastNewlineIndex === -1) return
+
+        const complete = buffer.slice(0, lastNewlineIndex + 1)
+        buffer = buffer.slice(lastNewlineIndex + 1)
+        controller.enqueue(encoder.encode(normalizeSseChunk(complete, providerId)))
+      },
+      flush(controller) {
+        buffer += decoder.decode()
+        if (!buffer) return
+        controller.enqueue(encoder.encode(normalizeSseChunk(buffer, providerId)))
+      },
+    }),
+  )
+
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
 async function normalizeResponsesSuccess(response: Response, providerId: string): Promise<Response> {
   if (!response.ok || providerId === "oca") return response
 
   const contentType = response.headers.get("content-type")
-  if (!contentType?.toLowerCase().includes("application/json")) return response
+  const normalizedContentType = contentType?.toLowerCase()
+  if (normalizedContentType?.includes("text/event-stream")) {
+    return normalizeResponsesEventStream(response, providerId)
+  }
+
+  if (!normalizedContentType?.includes("application/json")) return response
 
   let parsed: unknown
   try {
