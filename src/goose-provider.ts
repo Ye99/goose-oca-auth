@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { normalizeUrl } from "oca-auth-core"
+import type { BridgeConfig } from "./config"
 
 export type GooseProviderOptions = {
   name?: string
@@ -28,11 +29,11 @@ export type GooseCustomProviderConfig = {
   dynamic_models: true
 }
 
-function withChatCompletionsPath(baseUrl: string) {
+function withResponsesPath(baseUrl: string) {
   const normalized = normalizeUrl(baseUrl)
-  return normalized.endsWith("/v1/chat/completions")
+  return normalized.endsWith("/v1/responses")
     ? normalized
-    : `${normalized}/v1/chat/completions`
+    : `${normalized}/v1/responses`
 }
 
 export function buildGooseProviderConfig(
@@ -44,7 +45,7 @@ export function buildGooseProviderConfig(
     display_name: options.displayName ?? "OCA Bridge",
     description: options.description ?? "Local OCA auth bridge for Goose",
     api_key_env: "",
-    base_url: withChatCompletionsPath(options.baseUrl),
+    base_url: withResponsesPath(options.baseUrl),
     models: [
       {
         name: options.defaultModel ?? "oca/gpt-5.4",
@@ -54,6 +55,16 @@ export function buildGooseProviderConfig(
     supports_streaming: false,
     requires_auth: false,
     dynamic_models: true,
+  }
+}
+
+export function resolveGooseProviderInstallOptions(
+  bridgeConfig: Pick<BridgeConfig, "defaultModel">,
+  baseUrl: string,
+): GooseProviderOptions {
+  return {
+    baseUrl,
+    defaultModel: bridgeConfig.defaultModel,
   }
 }
 

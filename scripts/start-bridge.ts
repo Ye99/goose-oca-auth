@@ -16,7 +16,11 @@ import { spawn } from "node:child_process"
 import { resolveOauthConfig, exchangeCodeForTokens, normalizeUrl } from "oca-auth-core"
 import { createApp } from "../src/app"
 import { resolveBridgeConfig } from "../src/config"
-import { installGooseProvider, resolveGooseConfigDir } from "../src/goose-provider"
+import {
+  installGooseProvider,
+  resolveGooseConfigDir,
+  resolveGooseProviderInstallOptions,
+} from "../src/goose-provider"
 
 // ── PKCE helpers ──────────────────────────────────────────────────────
 
@@ -174,9 +178,10 @@ async function main() {
 
   // Step 3: Ensure goose provider is installed pointing to correct port
   const gooseConfigDir = resolveGooseConfigDir()
-  await installGooseProvider(gooseConfigDir, {
-    baseUrl: `http://127.0.0.1:${bridge.port}`,
-  })
+  await installGooseProvider(
+    gooseConfigDir,
+    resolveGooseProviderInstallOptions(bridgeConfig, `http://127.0.0.1:${bridge.port}`),
+  )
 
   console.log(`[bridge] Listening on http://127.0.0.1:${bridge.port}`)
   console.log("[bridge] Goose provider installed. Run: goose session")

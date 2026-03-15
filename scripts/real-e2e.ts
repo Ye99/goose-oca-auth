@@ -46,6 +46,11 @@ async function pkce() {
   return { verifier, challenge: encode(hash) }
 }
 
+function stripProviderPrefix(modelId: string) {
+  const slashIndex = modelId.indexOf("/")
+  return slashIndex >= 0 ? modelId.slice(slashIndex + 1) : modelId
+}
+
 // ── OAuth flow ────────────────────────────────────────────────────────
 
 const CALLBACK_PORT = 48801
@@ -208,9 +213,9 @@ async function main() {
     process.exit(1)
   }
 
-  // Prefer gpt-5.3-codex if available, otherwise use first model
+  // Prefer gpt-5.4 if available, otherwise use first model
   const allModels = (modelsBody as any).data as Array<{ id: string }>
-  const preferred = allModels.find((m) => m.id.includes("gpt-5.3-codex"))
+  const preferred = allModels.find((m) => stripProviderPrefix(m.id) === "gpt-5.4")
   const firstModelId = preferred?.id ?? allModels[0].id
   console.log(`[e2e] Using model: ${firstModelId}`)
 
@@ -223,49 +228,35 @@ async function main() {
   })
   console.log(`[e2e] Installed provider at: ${providerPath}`)
 
-  // Probe upstream directly to find working chat completions path
-  const baseURL = "https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm"
-  const chatPaths = [
-    "/chat/completions",
-    "/v1/chat/completions",
-    "/openai/chat/completions",
-    "/openai/v1/chat/completions",
-  ]
-  const chatBodyWithPrefix = JSON.stringify({
-    model: "oca/gpt-5.3-codex",
-    messages: [{ role: "user", content: "Reply with exactly one word: hello" }],
-    max_tokens: 10,
-  })
-  const chatBodyWithoutPrefix = JSON.stringify({
-    model: "gpt-5.3-codex",
-    messages: [{ role: "user", content: "Reply with exactly one word: hello" }],
-    max_tokens: 10,
+  const upstreamBaseUrl = normalizeUrl(
+    bridgeConfig.upstreamBaseUrl
+      ?? "https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm",
+  )
+  const upstreamProbeUrl = `${upstreamBaseUrl}/responses`
+  const upstreamProbeBody = JSON.stringify({
+    model: stripProviderPrefix(firstModelId),
+    input: [{ role: "user", content: [{ type: "input_text", text: "Reply with exactly one word: hello" }] }],
+    max_output_tokens: 10,
   })
 
-  console.log("\n[e2e] Step 4a: Probing upstream chat completions paths directly...")
-  for (const [label, chatBody] of [["with oca/ prefix", chatBodyWithPrefix], ["WITHOUT oca/ prefix", chatBodyWithoutPrefix]] as const) {
-    console.log(`\n  --- Model name ${label} ---`)
-    for (const path of ["/v1/chat/completions", "/chat/completions"]) {
-      const url = `${baseURL}${path}`
-      try {
-        const resp = await fetch(url, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "authorization": `Bearer ${tokens.access_token}`,
-          },
-          body: chatBody,
-          signal: AbortSignal.timeout(30_000),
-        })
-        const body = await resp.text()
-        console.log(`[e2e]   ${path} → ${resp.status}: ${body.slice(0, 300)}`)
-        if (resp.ok) {
-          console.log(`[e2e]   ^^^ SUCCESS!`)
-        }
-      } catch (err) {
-        console.log(`[e2e]   ${path} → ERROR: ${err}`)
-      }
+  console.log("\n[e2e] Step 4a: Probing upstream /responses directly...")
+  try {
+    const resp = await fetch(upstreamProbeUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "authorization": `Bearer ${tokens.access_token}`,
+      },
+      body: upstreamProbeBody,
+      signal: AbortSignal.timeout(30_000),
+    })
+    const body = await resp.text()
+    console.log(`[e2e]   /responses → ${resp.status}: ${body.slice(0, 300)}`)
+    if (resp.ok) {
+      console.log(`[e2e]   ^^^ SUCCESS!`)
     }
+  } catch (err) {
+    console.log(`[e2e]   /responses → ERROR: ${err}`)
   }
 
   console.log("\n[e2e] Step 4b: Running goose CLI through bridge...")

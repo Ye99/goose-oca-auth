@@ -39,11 +39,11 @@ export function createApp(config = resolveBridgeConfig(), deps: CreateAppDeps = 
         })
       }
 
-      if (pathname === "/v1/chat/completions") {
+      if (pathname === "/v1/responses") {
         if (request.method !== "POST") {
-          return badRequest("chat completions requires POST")
+          return badRequest("responses requires POST")
         }
-        return withUpstreamErrorHandling(() => session.proxyChatCompletions(request))
+        return withUpstreamErrorHandling(() => session.proxyResponses(request))
       }
 
       return new Response("Not found", { status: 404 })

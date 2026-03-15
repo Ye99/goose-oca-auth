@@ -34,6 +34,9 @@ function runGoose(args: string[], cwd: string, env: Record<string, string>) {
 test("Goose can use the installed OCA bridge custom provider end-to-end", async () => {
   const root = await mkdtemp(join(tmpdir(), "goose-oca-e2e-"))
   const seenAuth: string[] = []
+  const seenBridgePaths: string[] = []
+  const seenUpstreamPaths: string[] = []
+  const seenUpstreamBodies: Array<Record<string, unknown>> = []
 
   const upstream = Bun.serve({
     hostname: "127.0.0.1",
@@ -41,6 +44,7 @@ test("Goose can use the installed OCA bridge custom provider end-to-end", async 
     fetch: async (request) => {
       const url = new URL(request.url)
       seenAuth.push(request.headers.get("authorization") ?? "")
+      seenUpstreamPaths.push(url.pathname)
 
       if (url.pathname === "/v1/model/info") {
         return Response.json({
@@ -55,50 +59,38 @@ test("Goose can use the installed OCA bridge custom provider end-to-end", async 
       }
 
       if (url.pathname === "/responses") {
-        return new Response(
-          `data: ${JSON.stringify({
-            id: "resp-test",
-            object: "response",
-            created_at: 0,
-            status: "completed",
-            model: "gpt-5.3-codex",
-            output: [
-              {
-                type: "message",
-                content: [{ type: "output_text", text: "ok" }],
-                role: "assistant",
-              },
-            ],
-            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-          })}\n\n`,
-          { headers: { "content-type": "text/event-stream" } },
-        )
-      }
-
-      if (url.pathname === "/chat/completions") {
-        return new Response("not found", { status: 404 })
-      }
-
-      if (url.pathname === "/v1/chat/completions") {
+        seenUpstreamBodies.push(await request.json())
         return Response.json({
-          id: "chatcmpl-test",
-          object: "chat.completion",
-          created: 0,
+          id: "resp-test",
+          object: "response",
+          created_at: 0,
+          status: "completed",
+          error: null,
+          incomplete_details: null,
           model: "oca/gpt-5.3-codex",
-          choices: [
+          output: [
             {
-              index: 0,
-              finish_reason: "stop",
-              message: {
-                role: "assistant",
-                content: "ok",
-              },
+              id: "msg-test",
+              type: "message",
+              status: "completed",
+              role: "assistant",
+              content: [{ type: "output_text", text: "ok", annotations: [] }],
             },
           ],
+          parallel_tool_calls: true,
+          store: false,
+          tools: [],
+          tool_choice: "auto",
+          temperature: 1,
+          top_p: 1,
+          text: { format: { type: "text" } },
+          truncation: "disabled",
           usage: {
-            prompt_tokens: 1,
-            completion_tokens: 1,
+            input_tokens: 1,
+            input_tokens_details: { cached_tokens: 0 },
             total_tokens: 2,
+            output_tokens: 1,
+            output_tokens_details: { reasoning_tokens: 0 },
           },
         })
       }
@@ -116,7 +108,10 @@ test("Goose can use the installed OCA bridge custom provider end-to-end", async 
   const bridge = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: (request) => app.handle(request),
+    fetch: (request) => {
+      seenBridgePaths.push(new URL(request.url).pathname)
+      return app.handle(request)
+    },
   })
 
   try {
@@ -157,6 +152,23 @@ test("Goose can use the installed OCA bridge custom provider end-to-end", async 
     expect(result.exitCode).toBe(0)
     expect(result.stdout.toLowerCase()).toContain("ok")
     expect(seenAuth).toContain("Bearer bridge-test-token")
+    expect(seenBridgePaths.length).toBeGreaterThan(0)
+    expect(seenBridgePaths.every((path) => path === "/v1/responses")).toBe(true)
+    expect(seenUpstreamPaths).toContain("/responses")
+    expect(seenUpstreamPaths).not.toContain("/chat/completions")
+    expect(seenUpstreamPaths).not.toContain("/v1/chat/completions")
+    expect(seenUpstreamBodies.length).toBeGreaterThan(0)
+    for (const body of seenUpstreamBodies) {
+      expect(body).toMatchObject({
+        model: "gpt-5.3-codex",
+        store: false,
+        stream: false,
+      })
+    }
+
+    const seenUpstreamBodyStrings = seenUpstreamBodies.map((body) => JSON.stringify(body))
+
+    expect(seenUpstreamBodyStrings.some((body) => body.includes("Reply with exactly: ok"))).toBe(true)
   } finally {
     bridge.stop(true)
     upstream.stop(true)

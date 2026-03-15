@@ -8,7 +8,7 @@ test("resolveBridgeConfig uses stable bridge defaults and shared core oauth defa
   const config = resolveBridgeConfig({})
 
   expect(config.port).toBe(8787)
-  expect(config.defaultModel).toBe("oca/gpt-5.3-codex")
+  expect(config.defaultModel).toBe("oca/gpt-5.4")
   expect(config.oauth.idcsUrl).toBe(DEFAULT_IDCS_URL)
 })
 
@@ -18,5 +18,5 @@ test("resolveBridgeConfig rewrites the default model to match a custom provider 
   })
 
   expect(config.providerId).toBe("oracle")
-  expect(config.defaultModel).toBe("oracle/gpt-5.3-codex")
+  expect(config.defaultModel).toBe("oracle/gpt-5.4")
 })

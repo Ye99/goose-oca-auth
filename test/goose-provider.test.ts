@@ -4,9 +4,11 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
 
+import { resolveBridgeConfig } from "../src/config"
 import {
   buildGooseProviderConfig,
   installGooseProvider,
+  resolveGooseProviderInstallOptions,
   resolveGooseConfigDir,
 } from "../src/goose-provider"
 
@@ -21,10 +23,10 @@ test("buildGooseProviderConfig emits a Goose custom provider config for the brid
     display_name: "OCA Bridge",
     description: "Local OCA auth bridge for Goose",
     api_key_env: "",
-    base_url: "http://127.0.0.1:8787/v1/chat/completions",
+    base_url: "http://127.0.0.1:8787/v1/responses",
     models: [
       {
-        name: "oca/gpt-5.3-codex",
+        name: "oca/gpt-5.4",
         context_limit: 400000,
       },
     ],
@@ -41,6 +43,17 @@ test("resolveGooseConfigDir follows XDG config conventions", () => {
       HOME: "/Users/example",
     }),
   ).toBe("/tmp/xdg-config/goose")
+})
+
+test("shared Goose install options keep the resolved default model for custom providers", () => {
+  const bridgeConfig = resolveBridgeConfig({
+    GOOSE_OCA_PROVIDER: "oracle",
+  })
+
+  expect(resolveGooseProviderInstallOptions(bridgeConfig, "http://127.0.0.1:8787")).toEqual({
+    baseUrl: "http://127.0.0.1:8787",
+    defaultModel: "oracle/gpt-5.4",
+  })
 })
 
 test("installGooseProvider writes the provider JSON into Goose custom_providers", async () => {
@@ -72,11 +85,20 @@ test("installer script is directly executable", async () => {
       {
         cwd: resolve(import.meta.dir, ".."),
         encoding: "utf8",
+        env: {
+          ...process.env,
+          GOOSE_OCA_PROVIDER: "oracle",
+        },
       },
     )
 
     expect(result.status).toBe(0)
     expect(result.stdout).toContain("Installed Goose custom provider")
+    expect(
+      JSON.parse(
+        await readFile(join(configDir, "custom_providers", "oca_bridge.json"), "utf8"),
+      ).models[0]?.name,
+    ).toBe("oracle/gpt-5.4")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
