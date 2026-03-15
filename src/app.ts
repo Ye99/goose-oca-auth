@@ -18,6 +18,11 @@ type BridgeServerOverrides = {
   port?: number
 }
 
+function bunIdleTimeoutSeconds(requestTimeoutMs: number) {
+  const seconds = Math.max(1, Math.ceil(requestTimeoutMs / 1000))
+  return seconds > 255 ? 0 : seconds
+}
+
 async function withUpstreamErrorHandling(fn: () => Promise<Response>): Promise<Response> {
   try {
     return await fn()
@@ -65,7 +70,7 @@ export function createBridgeServerOptions(
   return {
     hostname: overrides.hostname ?? app.config.host,
     port: overrides.port ?? app.config.port,
-    idleTimeout: Math.max(1, Math.ceil(app.config.requestTimeoutMs / 1000)),
+    idleTimeout: bunIdleTimeoutSeconds(app.config.requestTimeoutMs),
     fetch(request: Request) {
       return app.handle(request)
     },

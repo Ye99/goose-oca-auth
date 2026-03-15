@@ -25,6 +25,14 @@ test("bridge server options align Bun idleTimeout with the request timeout", () 
   expect(serverOptions.idleTimeout).toBe(61)
 })
 
+test("bridge server options disable Bun idleTimeout when request timeout exceeds Bun's limit", () => {
+  const app = createApp(resolveBridgeConfig({}))
+
+  const serverOptions = createBridgeServerOptions(app)
+
+  expect(serverOptions.idleTimeout).toBe(0)
+})
+
 test("models endpoint exposes discovered models in an OpenAI-compatible list", async () => {
   const config = resolveBridgeConfig({
     OCA_BASE_URL: "https://oca.test.oraclecloud.com/litellm",
